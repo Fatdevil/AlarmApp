@@ -1,0 +1,62 @@
+{
+  "expo": {
+    "name": "Alarm App PoC",
+    "slug": "alarm-app-poc",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.stellan.alarmapp.poc",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "fetch",
+          "remote-notification"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.stellan.alarmapp.poc",
+      "adaptiveIcon": {
+        "backgroundColor": "#121212",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "SCHEDULE_EXACT_ALARM",
+        "RECEIVE_BOOT_COMPLETED",
+        "WAKE_LOCK"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-sqlite",
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "Alarm App behöver Always-platsåtkomst för att trigga platsalarm lokalt på enheten när du passerar zoner – utan att någonsin skicka din position till en server.",
+          "locationWhenInUsePermission": "Alarm App behöver din plats för att sätta geofences på kartan.",
+          "isIosBackgroundLocationEnabled": true,
+          "isAndroidBackgroundLocationEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#007AFF",
+          "enableBackgroundRemoteNotifications": true
+        }
+      ]
+    ]
+  }
+}
