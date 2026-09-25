@@ -1,321 +1,132 @@
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
-import { GeofenceLocation, LocalAlarm } from '../types';
-import {
-  MIN_GEOFENCE_RADIUS_METERS,
-  DEFAULT_GEOFENCE_RADIUS_METERS,
-  IOS_MAX_GEOFENCES,
-} from '../constants';
-import { getBatterySnapshot } from './battery';
-import { logDiagnosticEvent, updateAlarmStatus, getAllAlarms } from './db';
-import { fireImmediateNotification } from './notifications';
-
-export {
-  MIN_GEOFENCE_RADIUS_METERS,
-  DEFAULT_GEOFENCE_RADIUS_METERS,
-  IOS_MAX_GEOFENCES,
-};
+import { IOS_MAX_GEOFENCES, MIN_GEOFENCE_RADIUS_METERS } from '../constants';
+import { LocalAlarm } from '../types';
+import { findAlarmByLocationId, getAlarmsByStatus, updateAlarmStatus } from './db';
+import { logEvent } from './diagnostics';
+import { fireGeofenceNotification } from './notifications';
 
 export const GEOFENCE_BACKGROUND_TASK = 'ALARM_APP_GEOFENCE_TASK';
 
+// Android (Play Services) tillåter 100 geofences per app
+const MAX_GEOFENCES = Platform.OS === 'ios' ? IOS_MAX_GEOFENCES : 100;
+
+interface GeofenceTaskData {
+  eventType: Location.GeofencingEventType;
+  region: Location.LocationRegion;
+}
+
 /**
- * Top-level TaskManager definition för On-Device Geofencing.
- * Exekveras av operativsystemet (iOS CoreLocation / Android Play Services)
- * även när appen är suspenderad i bakgrunden eller nyligen väckt efter att ha varit avslutad.
+ * Top-level TaskManager-definition för geofencing på enheten. Måste definieras i
+ * modulscope och importeras tidigt (se index.ts) så att OS kan väcka appen.
  */
-TaskManager.defineTask(
-  GEOFENCE_BACKGROUND_TASK,
-  async ({ data, error }: { data: any; error: any }) => {
-    if (error) {
-      console.error('[GeofenceTask] Fel vid geofence-händelse:', error.message);
-      return;
-    }
-
-    if (data) {
-      const { eventType, region } = data;
-      const battery = await getBatterySnapshot();
-      const nowIso = new Date().toISOString();
-
-      const isEnter = eventType === Location.GeofencingEventType.Enter;
-      const isExit = eventType === Location.GeofencingEventType.Exit;
-
-      const eventName = isEnter ? 'GEOFENCE_ENTER' : 'GEOFENCE_EXIT';
-      const triggerType = isEnter ? 'ENTER_LOCATION' : 'EXIT_LOCATION';
-
-      console.log(`[GeofenceTask] OS triggade ${eventName} för region: ${region.identifier}`);
-
-      // Hitta motsvarande larm från lokal SQLite
-      const allAlarms = getAllAlarms();
-      const matchingAlarm = allAlarms.find((a) => a.location?.id === region.identifier);
-
-      // KONTROLL 1: Larmet måste existera och vara i status ACTIVE_GEOFENCE
-      if (!matchingAlarm || matchingAlarm.status !== 'ACTIVE_GEOFENCE') {
-        console.log(`[GeofenceTask] Larm ${region.identifier} är inte aktivt (${matchingAlarm?.status}). Avregistrerar zon ur OS.`);
-        await removeGeofence(region.identifier);
-        return;
-      }
-
-      // KONTROLL 2: Händelsen måste matcha larmets konfigurerade triggerType
-      if (matchingAlarm.triggerType !== triggerType) {
-        console.log(`[GeofenceTask] Händelsetyp matchar inte: larmet väntar på ${matchingAlarm.triggerType} men OS rapporterade ${triggerType}.`);
-        return;
-      }
-
-      const title = isEnter ? '📍 Platsalarm (Anlänt)' : '🚗 Platsalarm (Lämnat)';
-      const body = matchingAlarm.content;
-
-      // 1. Avfyra omedelbar lokal notis till användaren (helt offline)
-      await fireImmediateNotification(title, body, region.identifier, triggerType);
-
-      // 2. Uppdatera lokal status till FIRED_LOCALLY
-      updateAlarmStatus(matchingAlarm.id, 'FIRED_LOCALLY');
-
-      // 3. Avregistrera geofence omedelbart från OS hårdvara (P0 Buggfix: förhindrar oändliga larmloopar och frigör iOS-slots!)
-      await removeGeofence(region.identifier);
-
-      // 4. Logga i Diagnostikloggen för 48h/7-dagars R0-mätning
-      logDiagnosticEvent({
-        timestamp: nowIso,
-        eventType: eventName,
-        targetId: region.identifier,
-        batteryLevel: battery.batteryLevel,
-        isCharging: battery.isCharging,
-        lowPowerMode: battery.lowPowerMode,
-        lifecycleState: 'BACKGROUND',
-        locationSnapshot: {
-          latitude: region.latitude,
-          longitude: region.longitude,
-          accuracy: region.radius,
-        },
-        note: `Triggades on-device och avregistrerades ur OS. Matchade larm: ${matchingAlarm.id}`,
-      });
-
-      /**
-       * ARKITEKTURPRINCIP 2 & 5 (BINDANDE):
-       * Ingen status eller koordinater skickas till servern härifrån!
-       * Mottagarens gränskorsning är strikt lokal på enheten.
-       */
-    }
+TaskManager.defineTask<GeofenceTaskData>(GEOFENCE_BACKGROUND_TASK, async ({ data, error }) => {
+  if (error) {
+    console.error('[GeofenceTask] Fel vid geofence-händelse:', error.message);
+    return;
   }
-);
+  const regionId = data?.region?.identifier;
+  if (!data || !regionId) return;
 
-/**
- * Begär platsrättigheter (Förgrund + Bakgrund "Always")
- */
-export async function requestLocationPermissions(): Promise<{
-  foreground: boolean;
-  background: boolean;
-}> {
+  const { eventType, region } = data;
+  const isEnter = eventType === Location.GeofencingEventType.Enter;
+  const triggerType = isEnter ? 'ENTER_LOCATION' : 'EXIT_LOCATION';
+
+  const alarm = findAlarmByLocationId(regionId);
+
+  // Larmet måste finnas och vara aktivt – annars är zonen kvarglömd i OS
+  if (!alarm || alarm.status !== 'ACTIVE_GEOFENCE') {
+    await syncGeofencesWithOs().catch((err) => console.warn('[GeofenceTask] Synk:', err));
+    return;
+  }
+  // Händelsen måste matcha larmets typ (vi registrerar bara rätt riktning, men var defensiv)
+  if (alarm.triggerType !== triggerType) return;
+
+  await fireGeofenceNotification(alarm, isEnter);
+  updateAlarmStatus(alarm.id, 'FIRED_LOCALLY');
+
+  // Avregistrera direkt: förhindrar upprepade larm och frigör iOS-platser
+  await syncGeofencesWithOs().catch((err) => console.warn('[GeofenceTask] Synk:', err));
+
+  await logEvent(isEnter ? 'GEOFENCE_ENTER' : 'GEOFENCE_EXIT', regionId, {
+    locationSnapshot: {
+      latitude: region.latitude,
+      longitude: region.longitude,
+      accuracy: region.radius,
+    },
+    note: `Utlöst på enheten och avregistrerad. Larm: ${alarm.id}`,
+  }, 'BACKGROUND');
+
+  // ARKITEKTURPRINCIP 2 & 5: ingen status eller position skickas till någon server härifrån.
+});
+
+function toRegion(alarm: LocalAlarm): Location.LocationRegion {
+  const loc = alarm.location!;
+  return {
+    identifier: loc.id,
+    latitude: loc.latitude,
+    longitude: loc.longitude,
+    radius: loc.radius,
+    notifyOnEnter: alarm.triggerType === 'ENTER_LOCATION',
+    notifyOnExit: alarm.triggerType === 'EXIT_LOCATION',
+  };
+}
+
+export async function checkLocationPermissions(): Promise<{ foreground: boolean; background: boolean }> {
   try {
-    const { status: fgStatus } = await Location.requestForegroundPermissionsAsync();
-    if (fgStatus !== 'granted') {
-      return { foreground: false, background: false };
-    }
-
-    const { status: bgStatus } = await Location.requestBackgroundPermissionsAsync();
-    return {
-      foreground: true,
-      background: bgStatus === 'granted',
-    };
-  } catch (err) {
-    console.warn('[Geofence] Fel vid requestLocationPermissions:', err);
+    const [fg, bg] = await Promise.all([
+      Location.getForegroundPermissionsAsync(),
+      Location.getBackgroundPermissionsAsync(),
+    ]);
+    return { foreground: fg.granted, background: bg.granted };
+  } catch {
     return { foreground: false, background: false };
   }
 }
 
 /**
- * Kontrollera aktuella rättigheter
+ * Speglar databasens aktiva platslarm (nyaste först, upp till OS-gränsen) till OS.
+ * Enda stället som anropar start/stopGeofencingAsync – så kan OS och databas inte glida isär.
  */
-export async function checkLocationPermissions(): Promise<{
-  foreground: boolean;
-  background: boolean;
-}> {
-  try {
-    const fg = await Location.getForegroundPermissionsAsync();
-    const bg = await Location.getBackgroundPermissionsAsync();
+export async function syncGeofencesWithOs(): Promise<number> {
+  const active = getAlarmsByStatus(['ACTIVE_GEOFENCE']).filter((a) => a.location);
 
-    return {
-      foreground: fg.granted,
-      background: bg.granted,
-    };
-  } catch (err) {
-    console.warn('[Geofence] Fel vid checkLocationPermissions:', err);
-    return {
-      foreground: false,
-      background: false,
-    };
-  }
-}
-
-/**
- * Registrera en ny geofence-region on-device
- */
-export async function registerGeofence(
-  location: GeofenceLocation,
-  alarm: LocalAlarm
-): Promise<void> {
-  // 1. Validera minimiradie enligt MUST-gate i kravspecen
-  if (location.radius < MIN_GEOFENCE_RADIUS_METERS) {
-    throw new Error(
-      `Otillåten radie: ${location.radius} m. Minsta tillåtna radie för tillförlitlig triggning är ${MIN_GEOFENCE_RADIUS_METERS} meter.`
-    );
-  }
-
-  // 2. Kontrollera iOS 20-regionsgräns (räkna övriga aktiva regioner exklusive denna)
-  const otherActiveAlarms = getAllAlarms().filter(
-    (a) => a.status === 'ACTIVE_GEOFENCE' && a.location && a.location.id !== location.id
-  );
-
-  if (Platform.OS === 'ios' && otherActiveAlarms.length >= IOS_MAX_GEOFENCES) {
-    throw new Error(
-      `Maxgräns för iOS (${IOS_MAX_GEOFENCES} samtidigt aktiva zoner) har uppnåtts. Avaktivera en befintlig zon först.`
-    );
-  }
-
-  // 3. Bygg upp regioner för TaskManager
-  const newRegion: Location.LocationRegion = {
-    identifier: location.id,
-    latitude: location.latitude,
-    longitude: location.longitude,
-    radius: location.radius,
-    notifyOnEnter: alarm.triggerType === 'ENTER_LOCATION',
-    notifyOnExit: alarm.triggerType === 'EXIT_LOCATION',
-  };
-
-  const allRegionsToMonitor = [
-    ...otherActiveAlarms.map((a) => ({
-      identifier: a.location!.id,
-      latitude: a.location!.latitude,
-      longitude: a.location!.longitude,
-      radius: a.location!.radius,
-      notifyOnEnter: a.triggerType === 'ENTER_LOCATION',
-      notifyOnExit: a.triggerType === 'EXIT_LOCATION',
-    })),
-    newRegion,
-  ];
-
-  await Location.startGeofencingAsync(GEOFENCE_BACKGROUND_TASK, allRegionsToMonitor);
-
-  const battery = await getBatterySnapshot();
-  logDiagnosticEvent({
-    timestamp: new Date().toISOString(),
-    eventType: 'GEOFENCE_REGISTERED',
-    targetId: location.id,
-    batteryLevel: battery.batteryLevel,
-    isCharging: battery.isCharging,
-    lowPowerMode: battery.lowPowerMode,
-    lifecycleState: 'FOREGROUND',
-    locationSnapshot: {
-      latitude: location.latitude,
-      longitude: location.longitude,
-      accuracy: location.radius,
-    },
-    note: `Registrerad med radie ${location.radius}m. Totalt aktiva regioner: ${allRegionsToMonitor.length}`,
-  });
-}
-
-/**
- * Avregistrera en specifik geofence
- */
-export async function removeGeofence(locationId: string): Promise<void> {
-  try {
-    const activeAlarms = getAllAlarms().filter(
-      (a) => a.status === 'ACTIVE_GEOFENCE' && a.location && a.location.id !== locationId
-    );
-
-    if (activeAlarms.length === 0) {
-      const isRegistered = await TaskManager.isTaskRegisteredAsync(GEOFENCE_BACKGROUND_TASK);
-      if (isRegistered) {
-        await Location.stopGeofencingAsync(GEOFENCE_BACKGROUND_TASK);
-      }
-    } else {
-      const remainingRegions = activeAlarms.map((a) => ({
-        identifier: a.location!.id,
-        latitude: a.location!.latitude,
-        longitude: a.location!.longitude,
-        radius: a.location!.radius,
-        notifyOnEnter: a.triggerType === 'ENTER_LOCATION',
-        notifyOnExit: a.triggerType === 'EXIT_LOCATION',
-      }));
-      await Location.startGeofencingAsync(GEOFENCE_BACKGROUND_TASK, remainingRegions);
-    }
-  } catch (err) {
-    console.warn('[Geofence] Kunde inte avregistrera zon:', err);
-  }
-}
-
-/**
- * Rensa alla aktiva geofences från OS
- */
-export async function clearAllGeofences(): Promise<void> {
-  try {
-    const isRegistered = await TaskManager.isTaskRegisteredAsync(GEOFENCE_BACKGROUND_TASK);
-    if (isRegistered) {
+  if (active.length === 0) {
+    if (await TaskManager.isTaskRegisteredAsync(GEOFENCE_BACKGROUND_TASK)) {
       await Location.stopGeofencingAsync(GEOFENCE_BACKGROUND_TASK);
     }
-  } catch (err) {
-    console.warn('[Geofence] Fel vid clearAllGeofences:', err);
+    return 0;
+  }
+
+  const perms = await checkLocationPermissions();
+  if (!perms.background) {
+    throw new Error(
+      'Platslarm kräver platsåtkomst "Tillåt alltid". Ändra i Inställningar för att aktivera larmet.'
+    );
+  }
+
+  const regions = active.slice(0, MAX_GEOFENCES).map(toRegion);
+  await Location.startGeofencingAsync(GEOFENCE_BACKGROUND_TASK, regions);
+  return regions.length;
+}
+
+/** Kontroller som måste passera innan ett platslarm sparas som aktivt. */
+export function assertCanAddGeofence(alarm: LocalAlarm): void {
+  if (!alarm.location) throw new Error('Plats saknas.');
+  if (alarm.location.radius < MIN_GEOFENCE_RADIUS_METERS) {
+    throw new Error(`Minsta radie är ${MIN_GEOFENCE_RADIUS_METERS} meter.`);
+  }
+  const others = getAlarmsByStatus(['ACTIVE_GEOFENCE']).filter((a) => a.id !== alarm.id);
+  if (others.length >= MAX_GEOFENCES) {
+    throw new Error(
+      `Du kan ha högst ${MAX_GEOFENCES} aktiva platslarm samtidigt. Markera ett som klart först.`
+    );
   }
 }
 
-/**
- * Återställ alla aktiva geofences vid reboot eller appstart (P0 Buggfix)
- */
-export async function restoreGeofencesOnBoot(): Promise<number> {
-  try {
-    const pending = getAllAlarms().filter(
-      (a) => a.status === 'ACTIVE_GEOFENCE' && a.location
-    );
-
-    if (pending.length === 0) {
-      try {
-        const isRegistered = await TaskManager.isTaskRegisteredAsync(GEOFENCE_BACKGROUND_TASK);
-        if (isRegistered) {
-          await Location.stopGeofencingAsync(GEOFENCE_BACKGROUND_TASK);
-        }
-      } catch (err) {
-        // Ignorera om stopGeofencingAsync misslyckas vid tom lista
-      }
-      return 0;
-    }
-
-    // 1. Kontrollera platsbehörighet innan vi försöker registrera geofences i OS
-    const perms = await checkLocationPermissions();
-    if (!perms.background) {
-      console.log('[Geofence] Bakgrundsplatsbehörighet saknas, hoppar över återställning av geofences i OS.');
-      return 0;
-    }
-
-    // Om över 20 zoner finns på iOS, begränsa till 20 nyaste
-    const alarmsToRestore = Platform.OS === 'ios' ? pending.slice(0, IOS_MAX_GEOFENCES) : pending;
-
-    const regions: Location.LocationRegion[] = alarmsToRestore.map((a) => ({
-      identifier: a.location!.id,
-      latitude: a.location!.latitude,
-      longitude: a.location!.longitude,
-      radius: a.location!.radius,
-      notifyOnEnter: a.triggerType === 'ENTER_LOCATION',
-      notifyOnExit: a.triggerType === 'EXIT_LOCATION',
-    }));
-
-    await Location.startGeofencingAsync(GEOFENCE_BACKGROUND_TASK, regions);
-
-    const battery = await getBatterySnapshot();
-    logDiagnosticEvent({
-      timestamp: new Date().toISOString(),
-      eventType: 'BOOT_RESTORE_TRIGGERED',
-      targetId: 'GEOFENCE_SYSTEM',
-      batteryLevel: battery.batteryLevel,
-      isCharging: battery.isCharging,
-      lowPowerMode: battery.lowPowerMode,
-      lifecycleState: 'TERMINATED_WAKEUP',
-      note: `Återställde ${regions.length} aktiva geofences efter omstart/appstart.`,
-    });
-
-    return regions.length;
-  } catch (err) {
-    console.warn('[Geofence] Fel vid restoreGeofencesOnBoot:', err);
-    return 0;
+export async function clearAllGeofences(): Promise<void> {
+  if (await TaskManager.isTaskRegisteredAsync(GEOFENCE_BACKGROUND_TASK)) {
+    await Location.stopGeofencingAsync(GEOFENCE_BACKGROUND_TASK);
   }
 }

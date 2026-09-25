@@ -1,12 +1,34 @@
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import { SNOOZE_MINUTES } from '../constants';
+import { WEEKDAY_NUMBERS } from '../logic/time';
 import { LocalAlarm } from '../types';
-import { getBatterySnapshot } from './battery';
-import { logDiagnosticEvent, updateAlarmStatus, getPendingAlarms, saveAlarm } from './db';
 
-const ALARM_CHANNEL_ID = 'alarm_channel_high_priority';
+/**
+ * Larmkanal på Android. Kanalinställningar är oföränderliga efter att de skapats,
+ * därför ett nytt ID (v2) när ljudet nu spelas som *larm* (AudioUsage.ALARM) och
+ * får bryta igenom Stör ej.
+ */
+export const ALARM_CHANNEL_ID = 'alarms_v2';
+const FRIEND_CHANNEL_ID = 'friend_requests';
+const LEGACY_CHANNEL_ID = 'alarm_channel_high_priority';
 
-// Konfigurera standardbeteende för notiser i förgrunden
+export const ALARM_CATEGORY = 'ALARM';
+export const FRIEND_CATEGORY = 'FRIEND_REQUEST';
+
+export const ACTION_DONE = 'DONE';
+export const ACTION_SNOOZE = 'SNOOZE';
+export const ACTION_ACCEPT = 'ACCEPT';
+export const ACTION_DECLINE = 'DECLINE';
+
+export type NotificationKind = 'ALARM' | 'FRIEND_REQUEST';
+
+export interface AlarmNotificationData extends Record<string, unknown> {
+  kind: NotificationKind;
+  alarmId: string;
+}
+
+// Visa notiser även när appen är i förgrunden
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldPlaySound: true,
@@ -16,240 +38,197 @@ Notifications.setNotificationHandler({
   }),
 });
 
-/**
- * Initiera notiskanaler (Android kräver High Importance för att väcka skärmen)
- */
+/** Kanaler (Android) och åtgärdsknappar (båda plattformarna). Idempotent. */
 export async function initNotificationChannels(): Promise<void> {
   if (Platform.OS === 'android') {
-    try {
-      await Notifications.setNotificationChannelAsync(ALARM_CHANNEL_ID, {
-        name: 'Kritiska Alarm & Påminnelser',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 500, 250, 500],
-        lightColor: '#FF231F7C',
-        enableVibrate: true,
-        showBadge: true,
-      });
-    } catch (err) {
-      console.log('[Notifications] Info notiskanal (systembegränsning/Expo Go fallback):', err);
-    }
-  }
-}
-
-/**
- * Begär notisbehörighet
- */
-export async function requestNotificationPermissions(): Promise<boolean> {
-  try {
-    const settings = await Notifications.getPermissionsAsync();
-    if (settings.granted || settings.ios?.status === Notifications.IosAuthorizationStatus.PROVISIONAL) {
-      return true;
-    }
-    const request = await Notifications.requestPermissionsAsync({
-      ios: {
-        allowAlert: true,
-        allowBadge: true,
-        allowSound: true,
+    await Notifications.setNotificationChannelAsync(ALARM_CHANNEL_ID, {
+      name: 'Larm',
+      description: 'Tids- och platslarm som du har skapat',
+      importance: Notifications.AndroidImportance.MAX,
+      bypassDnd: true,
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      vibrationPattern: [0, 500, 250, 500, 250, 500],
+      enableVibrate: true,
+      audioAttributes: {
+        usage: Notifications.AndroidAudioUsage.ALARM,
+        contentType: Notifications.AndroidAudioContentType.SONIFICATION,
       },
     });
-    return request.granted;
-  } catch (err) {
-    console.warn('[Notifications] Fel vid begäran av notisbehörighet:', err);
-    return false;
+    await Notifications.setNotificationChannelAsync(FRIEND_CHANNEL_ID, {
+      name: 'Förfrågningar från vänner',
+      importance: Notifications.AndroidImportance.DEFAULT,
+    });
+    await Notifications.deleteNotificationChannelAsync(LEGACY_CHANNEL_ID).catch(() => {});
   }
+
+  await Notifications.setNotificationCategoryAsync(ALARM_CATEGORY, [
+    { identifier: ACTION_DONE, buttonTitle: 'Klar', options: { opensAppToForeground: true } },
+    {
+      identifier: ACTION_SNOOZE,
+      buttonTitle: `Snooza ${SNOOZE_MINUTES} min`,
+      options: { opensAppToForeground: true },
+    },
+  ]);
+  await Notifications.setNotificationCategoryAsync(FRIEND_CATEGORY, [
+    { identifier: ACTION_ACCEPT, buttonTitle: 'Aktivera', options: { opensAppToForeground: true } },
+    {
+      identifier: ACTION_DECLINE,
+      buttonTitle: 'Avböj',
+      options: { opensAppToForeground: true, isDestructive: true },
+    },
+  ]);
+}
+
+function alarmContent(alarm: LocalAlarm, title: string): Notifications.NotificationContentInput {
+  const data: AlarmNotificationData = { kind: 'ALARM', alarmId: alarm.id };
+  return {
+    title,
+    body: alarm.content,
+    // iOS: ringsignalen är längre och tydligare än standardljudet
+    sound: Platform.OS === 'ios' ? 'defaultRingtone' : true,
+    priority: Notifications.AndroidNotificationPriority.MAX,
+    // iOS: bryter igenom Fokus (kräver time-sensitive-entitlement, se app.json)
+    interruptionLevel: 'timeSensitive',
+    categoryIdentifier: ALARM_CATEGORY,
+    data,
+  };
 }
 
 /**
- * Schemalägg ett lokalt tidsalarm (Fas 3).
- * Fungerar 100 % offline utan internetuppkoppling vid triggertillfället.
+ * Schemalägger ett tidslarm i OS och returnerar notis-ID:n. Sparar ingenting –
+ * anroparen ansvarar för att skriva ID:n till databasen (se services/alarms.ts).
  */
-export async function scheduleTimeAlarm(alarm: LocalAlarm): Promise<string | null> {
-  if (!alarm.dateTime) {
-    throw new Error('dateTime krävs för tidsalarm');
-  }
+export async function scheduleTimeAlarm(alarm: LocalAlarm, now: Date = new Date()): Promise<string[]> {
+  if (!alarm.dateTime) throw new Error('Tid saknas för tidslarm.');
+  const first = new Date(alarm.dateTime);
+  if (isNaN(first.getTime())) throw new Error('Ogiltig tid.');
 
-  const targetDate = new Date(alarm.dateTime);
-  const now = new Date();
+  const repeat = alarm.repeat ?? 'NONE';
+  const content = alarmContent(alarm, '⏰ Larm');
+  const hour = first.getHours();
+  const minute = first.getMinutes();
 
-  if (targetDate.getTime() <= now.getTime()) {
-    throw new Error('Alarmtiden måste vara i framtiden');
-  }
-
-  // Avbryt eventuell tidigare schemalagd notis för att undvika dubbletter i OS
-  if (alarm.notificationId) {
-    await cancelTimeAlarm(alarm.notificationId);
-  }
-
-  const notificationId = await Notifications.scheduleNotificationAsync({
-    content: {
-      title: '⏰ Alarm',
-      body: alarm.content,
-      sound: true,
-      priority: Notifications.AndroidNotificationPriority.MAX,
-      data: {
-        alarmId: alarm.id,
-        triggerType: 'TIME',
-        scheduledTime: alarm.dateTime,
+  if (repeat === 'NONE') {
+    if (first.getTime() <= now.getTime()) throw new Error('Tiden har redan passerat. Välj en ny tid.');
+    const id = await Notifications.scheduleNotificationAsync({
+      content,
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DATE,
+        date: first,
+        channelId: ALARM_CHANNEL_ID,
       },
-    },
+    });
+    return [id];
+  }
+
+  if (repeat === 'DAILY') {
+    const id = await Notifications.scheduleNotificationAsync({
+      content,
+      trigger: {
+        type: Notifications.SchedulableTriggerInputTypes.DAILY,
+        hour,
+        minute,
+        channelId: ALARM_CHANNEL_ID,
+      },
+    });
+    return [id];
+  }
+
+  // Vardagar: en veckotrigger per dag. Rulla tillbaka om någon misslyckas.
+  const ids: string[] = [];
+  try {
+    for (const weekday of WEEKDAY_NUMBERS) {
+      ids.push(
+        await Notifications.scheduleNotificationAsync({
+          content,
+          trigger: {
+            type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+            weekday,
+            hour,
+            minute,
+            channelId: ALARM_CHANNEL_ID,
+          },
+        })
+      );
+    }
+  } catch (err) {
+    await cancelNotifications(ids);
+    throw err;
+  }
+  return ids;
+}
+
+export async function scheduleSnooze(alarm: LocalAlarm, now: Date = new Date()): Promise<string> {
+  return Notifications.scheduleNotificationAsync({
+    content: alarmContent(alarm, '⏰ Larm (snoozat)'),
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DATE,
-      date: targetDate,
+      date: new Date(now.getTime() + SNOOZE_MINUTES * 60_000),
       channelId: ALARM_CHANNEL_ID,
     },
   });
-
-  // Spara notificationId i SQLite så att notisen kan avbrytas vid radering/klarmarkering
-  saveAlarm({ ...alarm, notificationId });
-
-  const battery = await getBatterySnapshot();
-  logDiagnosticEvent({
-    timestamp: new Date().toISOString(),
-    eventType: 'ALARM_SCHEDULED',
-    targetId: alarm.id,
-    scheduledTime: alarm.dateTime,
-    batteryLevel: battery.batteryLevel,
-    isCharging: battery.isCharging,
-    lowPowerMode: battery.lowPowerMode,
-    lifecycleState: 'FOREGROUND',
-    note: `Notis-ID: ${notificationId}`,
-  });
-
-  return notificationId;
 }
 
-/**
- * Avbryt en schemalagd notis i operativsystemet (P0 Buggfix för Ghost Alarms)
- */
-export async function cancelTimeAlarm(notificationId: string): Promise<void> {
-  try {
-    await Notifications.cancelScheduledNotificationAsync(notificationId);
-  } catch (err) {
-    console.warn('[Notifications] Kunde inte avbryta notis:', err);
+export async function cancelNotifications(ids: string[] | undefined): Promise<void> {
+  for (const id of ids ?? []) {
+    try {
+      await Notifications.cancelScheduledNotificationAsync(id);
+    } catch (err) {
+      console.warn('[Notifications] Kunde inte avbryta notis:', err);
+    }
   }
 }
 
-/**
- * Avbryt alla schemalagda notiser i operativsystemet (för GDPR/Reset)
- */
-export async function cancelAllTimeAlarms(): Promise<void> {
-  try {
-    await Notifications.cancelAllScheduledNotificationsAsync();
-  } catch (err) {
-    console.warn('[Notifications] Kunde inte avbryta alla notiser:', err);
-  }
+export async function cancelAllScheduledNotifications(): Promise<void> {
+  await Notifications.cancelAllScheduledNotificationsAsync();
 }
 
-/**
- * Skicka en omedelbar lokal notis (används när ett geofence triggas on-device)
- */
-export async function fireImmediateNotification(
-  title: string,
-  body: string,
-  alarmId: string,
-  eventType: 'ENTER_LOCATION' | 'EXIT_LOCATION'
-): Promise<void> {
+/** Omedelbar lokal notis när en geofence löser ut på enheten. */
+export async function fireGeofenceNotification(alarm: LocalAlarm, isEnter: boolean): Promise<void> {
+  const place = alarm.location?.name ?? 'platsen';
   await Notifications.scheduleNotificationAsync({
-    content: {
-      title,
-      body,
-      sound: true,
-      priority: Notifications.AndroidNotificationPriority.MAX,
-      data: {
-        alarmId,
-        triggerType: eventType,
-      },
-    },
+    content: alarmContent(alarm, isEnter ? `📍 Framme vid ${place}` : `📍 Lämnat ${place}`),
     trigger: { channelId: ALARM_CHANNEL_ID },
   });
 }
 
-/**
- * Återställ larm efter reboot (RECEIVE_BOOT_COMPLETED / App launch)
- * Läser alla kvarvarande larm från SQLite och schemalägger om dem i OS.
- * Kontrollerar befintliga OS-schemaläggningar för att förhindra dubbletter (Stampede).
- */
-export async function restoreAlarmsOnBoot(): Promise<number> {
-  try {
-    const pending = getPendingAlarms();
-    const now = Date.now();
-    let restoredCount = 0;
+/** Lokal notis om att en vän vill skicka ett platslarm – kräver aktivt godkännande. */
+export async function presentFriendRequest(alarm: LocalAlarm): Promise<void> {
+  const data: AlarmNotificationData = { kind: 'FRIEND_REQUEST', alarmId: alarm.id };
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title: 'Nytt platslarm från en vän',
+      body: `”${alarm.content}” vid ${alarm.location?.name ?? 'en plats'}. Vill du aktivera det?`,
+      categoryIdentifier: FRIEND_CATEGORY,
+      data,
+    },
+    trigger: { channelId: FRIEND_CHANNEL_ID },
+  });
+}
 
-    // Hämta redan schemalagda notiser i OS för att inte duplicera
-    let scheduledInOs: Notifications.NotificationRequest[] = [];
-    try {
-      scheduledInOs = await Notifications.getAllScheduledNotificationsAsync();
-    } catch (err) {
-      console.warn('[Notifications] Kunde inte läsa befintliga schemalagda notiser från OS:', err);
+/** alarmId → schemalagda notis-ID:n som OS faktiskt har kvar. */
+export async function getScheduledByAlarm(): Promise<Map<string, string[]>> {
+  const map = new Map<string, string[]>();
+  const requests = await Notifications.getAllScheduledNotificationsAsync();
+  for (const req of requests) {
+    const alarmId = req.content?.data?.alarmId;
+    if (typeof alarmId === 'string') {
+      map.set(alarmId, [...(map.get(alarmId) ?? []), req.identifier]);
     }
-
-    const scheduledMap = new Map<string, string>(); // alarmId -> notificationId
-    for (const req of scheduledInOs) {
-      const alarmId = req.content?.data?.alarmId;
-      if (alarmId && typeof alarmId === 'string') {
-        scheduledMap.set(alarmId, req.identifier);
-      }
-    }
-
-    for (const alarm of pending) {
-      if (alarm.triggerType === 'TIME' && alarm.dateTime) {
-        const alarmTime = new Date(alarm.dateTime).getTime();
-        if (alarmTime > now) {
-          // Om inte redan schemalagd i OS, schemalägg nu
-          if (!scheduledMap.has(alarm.id)) {
-            try {
-              const notificationId = await Notifications.scheduleNotificationAsync({
-                content: {
-                  title: '⏰ Alarm (Återställt efter omstart)',
-                  body: alarm.content,
-                  sound: true,
-                  priority: Notifications.AndroidNotificationPriority.MAX,
-                  data: { alarmId: alarm.id, triggerType: 'TIME' },
-                },
-                trigger: {
-                  type: Notifications.SchedulableTriggerInputTypes.DATE,
-                  date: new Date(alarm.dateTime),
-                  channelId: ALARM_CHANNEL_ID,
-                },
-              });
-              saveAlarm({ ...alarm, notificationId });
-              restoredCount++;
-            } catch (schedErr) {
-              console.warn(`[Notifications] Kunde inte schemalägga larm ${alarm.id}:`, schedErr);
-            }
-          } else {
-            // Den är redan schemalagd i OS – se till att DB har rätt ID
-            const existingNotifId = scheduledMap.get(alarm.id);
-            if (existingNotifId && alarm.notificationId !== existingNotifId) {
-              saveAlarm({ ...alarm, notificationId: existingNotifId });
-            }
-          }
-        } else {
-          // Förfallet under tiden telefonen var avstängd
-          updateAlarmStatus(alarm.id, 'FIRED_LOCALLY');
-        }
-      }
-    }
-
-    try {
-      const battery = await getBatterySnapshot();
-      logDiagnosticEvent({
-        timestamp: new Date().toISOString(),
-        eventType: 'BOOT_RESTORE_TRIGGERED',
-        targetId: 'SYSTEM',
-        batteryLevel: battery.batteryLevel,
-        isCharging: battery.isCharging,
-        lowPowerMode: battery.lowPowerMode,
-        lifecycleState: 'TERMINATED_WAKEUP',
-        note: `Återställde ${restoredCount} larm efter systemomstart.`,
-      });
-    } catch (diagErr) {
-      console.warn('[Notifications] Kunde inte logga diagnostik för återställning:', diagErr);
-    }
-
-    return restoredCount;
-  } catch (err) {
-    console.warn('[Notifications] Övergripande fel i restoreAlarmsOnBoot:', err);
-    return 0;
   }
+  return map;
+}
+
+export function readNotificationData(
+  notification: Notifications.Notification
+): AlarmNotificationData | null {
+  const data = notification.request.content.data;
+  if (
+    data &&
+    typeof data.alarmId === 'string' &&
+    (data.kind === 'ALARM' || data.kind === 'FRIEND_REQUEST')
+  ) {
+    return { kind: data.kind, alarmId: data.alarmId };
+  }
+  return null;
 }
