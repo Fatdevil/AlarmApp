@@ -11,7 +11,6 @@ import { LocalAlarm } from '../types';
  */
 export const ALARM_CHANNEL_ID = 'alarms_v2';
 const FRIEND_CHANNEL_ID = 'friend_requests';
-const LEGACY_CHANNEL_ID = 'alarm_channel_high_priority';
 
 export const ALARM_CATEGORY = 'ALARM';
 export const FRIEND_CATEGORY = 'FRIEND_REQUEST';
@@ -58,7 +57,8 @@ export async function initNotificationChannels(): Promise<void> {
       name: 'Förfrågningar från vänner',
       importance: Notifications.AndroidImportance.DEFAULT,
     });
-    await Notifications.deleteNotificationChannelAsync(LEGACY_CHANNEL_ID).catch(() => {});
+    // Den gamla kanalen (alarm_channel_high_priority) behålls: redan schemalagda larm
+    // från tidigare version pekar på den och skulle annars inte visas.
   }
 
   await Notifications.setNotificationCategoryAsync(ALARM_CATEGORY, [
