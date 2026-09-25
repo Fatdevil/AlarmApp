@@ -37,6 +37,7 @@ import {
   openSystemSettings,
   requestLocationPermissions,
   requestNotificationPermission,
+  requestSystemAlarmPermission,
 } from '../src/services/permissions';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../src/theme';
 import { ChecklistItem, GeofenceLocation, LocalAlarm, RepeatRule, TriggerType } from '../src/types';
@@ -68,7 +69,22 @@ function showSettingsAlert(title: string, message: string) {
 async function ensurePermissions(triggerType: TriggerType): Promise<boolean> {
   const perms = await getPermissionSnapshot();
 
-  if (perms.notifications !== 'granted') {
+  // iOS 26+: riktiga systemlarm (AlarmKit). Nekas det faller vi tillbaka till notiser.
+  let systemAlarms = perms.systemAlarms;
+  if (triggerType === 'TIME' && systemAlarms === 'undetermined') {
+    const ok = await confirm(
+      'Tillåt larm',
+      'Då ringer larmet som en väckarklocka – även i tyst läge och med Fokus på.',
+      'Fortsätt'
+    );
+    if (ok && (await requestSystemAlarmPermission())) systemAlarms = 'granted';
+  }
+
+  // AlarmKit behöver inga notiser. Android-larm och platslarm visas som notiser.
+  const needsNotifications =
+    triggerType !== 'TIME' || !(Platform.OS === 'ios' && systemAlarms === 'granted');
+
+  if (needsNotifications && perms.notifications !== 'granted') {
     if (perms.notifications === 'denied') {
       showSettingsAlert('Notiser är avstängda', 'Slå på notiser för Alarm App för att larmet ska kunna ringa.');
       return false;

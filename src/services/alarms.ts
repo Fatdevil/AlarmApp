@@ -160,7 +160,7 @@ export async function reconcileScheduledAlarms(now: Date = new Date()): Promise<
   const scheduled = getAlarmsByStatus(['SCHEDULED']).filter(
     (a) => a.triggerType === 'TIME' && a.dateTime
   );
-  const inOs = await getScheduledByAlarm();
+  const inOs = await getScheduledByAlarm(scheduled);
 
   for (const alarm of scheduled) {
     const osIds = inOs.get(alarm.id) ?? [];

@@ -16,6 +16,9 @@
       "bundleIdentifier": "com.stellan.alarmapp.poc",
       "entitlements": {
         "com.apple.developer.usernotifications.time-sensitive": true
+      },
+      "infoPlist": {
+        "NSAlarmKitUsageDescription": "Alarm App använder systemlarm så att dina larm ringer även i tyst läge och med Fokus på."
       }
     },
     "android": {

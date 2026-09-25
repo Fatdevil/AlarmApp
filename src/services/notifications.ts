@@ -1,5 +1,12 @@
+import * as Crypto from 'expo-crypto';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
+import {
+  cancelNativeAlarm,
+  getNativeAlarmAuthorization,
+  getScheduledNativeAlarmIds,
+  scheduleNativeAlarm,
+} from '../../modules/native-alarm';
 import { SNOOZE_MINUTES } from '../constants';
 import { WEEKDAY_NUMBERS } from '../logic/time';
 import { LocalAlarm } from '../types';
@@ -94,15 +101,47 @@ function alarmContent(alarm: LocalAlarm, title: string): Notifications.Notificat
   };
 }
 
+/** Prefix för ID:n som tillhör systemlarm (AlarmKit/AlarmManager) i stället för notiser. */
+export const NATIVE_PREFIX = 'native:';
+
+const UUID_SUFFIX = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+function nativeIdFor(alarm: LocalAlarm): string {
+  return (alarm.id.match(UUID_SUFFIX)?.[1] ?? Crypto.randomUUID()).toLowerCase();
+}
+
 /**
- * Schemalägger ett tidslarm i OS och returnerar notis-ID:n. Sparar ingenting –
- * anroparen ansvarar för att skriva ID:n till databasen (se services/alarms.ts).
+ * Schemalägger ett tidslarm och returnerar ID:n att spara. Använder riktiga systemlarm
+ * (AlarmKit på iOS 26+, AlarmManager på Android) när de är tillgängliga och tillåtna,
+ * annars vanliga notiser. Sparar ingenting – se services/alarms.ts.
  */
 export async function scheduleTimeAlarm(alarm: LocalAlarm, now: Date = new Date()): Promise<string[]> {
   if (!alarm.dateTime) throw new Error('Tid saknas för tidslarm.');
   const first = new Date(alarm.dateTime);
   if (isNaN(first.getTime())) throw new Error('Ogiltig tid.');
+  const repeat = alarm.repeat ?? 'NONE';
+  if (repeat === 'NONE' && first.getTime() <= now.getTime()) {
+    throw new Error('Tiden har redan passerat. Välj en ny tid.');
+  }
 
+  if ((await getNativeAlarmAuthorization()) === 'authorized') {
+    try {
+      const id = nativeIdFor(alarm);
+      await scheduleNativeAlarm({
+        id,
+        title: alarm.content,
+        date: first,
+        weekdays: repeat === 'DAILY' ? [1, 2, 3, 4, 5, 6, 7] : repeat === 'WEEKDAYS' ? WEEKDAY_NUMBERS : [],
+      });
+      return [NATIVE_PREFIX + id];
+    } catch (err) {
+      console.warn('[Notifications] Systemlarm misslyckades, använder notis:', err);
+    }
+  }
+  return scheduleNotificationAlarm(alarm, first, now);
+}
+
+async function scheduleNotificationAlarm(alarm: LocalAlarm, first: Date, now: Date): Promise<string[]> {
   const repeat = alarm.repeat ?? 'NONE';
   const content = alarmContent(alarm, '⏰ Larm');
   const hour = first.getHours();
@@ -172,7 +211,8 @@ export async function scheduleSnooze(alarm: LocalAlarm, now: Date = new Date()):
 export async function cancelNotifications(ids: string[] | undefined): Promise<void> {
   for (const id of ids ?? []) {
     try {
-      await Notifications.cancelScheduledNotificationAsync(id);
+      if (id.startsWith(NATIVE_PREFIX)) await cancelNativeAlarm(id.slice(NATIVE_PREFIX.length));
+      else await Notifications.cancelScheduledNotificationAsync(id);
     } catch (err) {
       console.warn('[Notifications] Kunde inte avbryta notis:', err);
     }
@@ -206,14 +246,25 @@ export async function presentFriendRequest(alarm: LocalAlarm): Promise<void> {
   });
 }
 
-/** alarmId → schemalagda notis-ID:n som OS faktiskt har kvar. */
-export async function getScheduledByAlarm(): Promise<Map<string, string[]>> {
+/** alarmId → ID:n (notiser och systemlarm) som OS faktiskt har kvar. */
+export async function getScheduledByAlarm(alarms: LocalAlarm[]): Promise<Map<string, string[]>> {
   const map = new Map<string, string[]>();
+  const add = (alarmId: string, id: string) => map.set(alarmId, [...(map.get(alarmId) ?? []), id]);
+
   const requests = await Notifications.getAllScheduledNotificationsAsync();
   for (const req of requests) {
     const alarmId = req.content?.data?.alarmId;
-    if (typeof alarmId === 'string') {
-      map.set(alarmId, [...(map.get(alarmId) ?? []), req.identifier]);
+    if (typeof alarmId === 'string') add(alarmId, req.identifier);
+  }
+
+  // Systemlarm bär inget alarmId – matcha mot de ID:n vi sparade för varje larm.
+  // En snooze på Android har ID:t "<uuid>:snooze".
+  const nativeIds = new Set(await getScheduledNativeAlarmIds());
+  for (const alarm of alarms) {
+    for (const id of alarm.notificationIds ?? []) {
+      if (!id.startsWith(NATIVE_PREFIX)) continue;
+      const raw = id.slice(NATIVE_PREFIX.length);
+      if (nativeIds.has(raw) || nativeIds.has(`${raw}:snooze`)) add(alarm.id, id);
     }
   }
   return map;

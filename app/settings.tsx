@@ -1,7 +1,8 @@
 import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import React, { useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, Text, View } from 'react-native';
+import { openFullScreenAlarmSettings } from '../modules/native-alarm';
 import { Button, Card, Icon, IconName, SectionLabel } from '../src/components/ui';
 import { useSnackbar } from '../src/components/UndoSnackbar';
 import { getSetting, purgeAllLocalData, setSetting } from '../src/services/db';
@@ -12,6 +13,7 @@ import {
   PermissionState,
   requestLocationPermissions,
   requestNotificationPermission,
+  requestSystemAlarmPermission,
   usePermissions,
 } from '../src/services/permissions';
 import { makeStyles, MIN_TOUCH, spacing, typography, useTheme } from '../src/theme';
@@ -103,6 +105,22 @@ export default function SettingsScreen() {
       <View style={styles.section}>
         <SectionLabel>Behörigheter</SectionLabel>
         <Card style={{ gap: spacing.md }}>
+          {Platform.OS === 'ios' && permissions && permissions.systemAlarms !== 'unavailable' && (
+            <PermissionRow
+              label="Larm"
+              description="Ringer som en väckarklocka, även i tyst läge och med Fokus."
+              state={permissions.systemAlarms}
+              onRequest={() => requestSystemAlarmPermission().finally(refresh)}
+            />
+          )}
+          {Platform.OS === 'android' && permissions && (
+            <PermissionRow
+              label="Helskärmslarm"
+              description="Visar larmet över låsskärmen."
+              state={permissions.fullScreenAlarms ? 'granted' : 'undetermined'}
+              onRequest={openFullScreenAlarmSettings}
+            />
+          )}
           <PermissionRow
             label="Notiser"
             description="Krävs för att larm ska ringa."

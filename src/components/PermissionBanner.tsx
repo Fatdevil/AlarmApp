@@ -1,5 +1,6 @@
 import React from 'react';
-import { Text, View } from 'react-native';
+import { Platform, Text, View } from 'react-native';
+import { openFullScreenAlarmSettings } from '../../modules/native-alarm';
 import { LocalAlarm } from '../types';
 import {
   openSystemSettings,
@@ -25,14 +26,16 @@ export function PermissionBanner({ permissions, alarms, onChanged }: Props) {
   const { colors } = useTheme();
   if (!permissions) return null;
 
-  const hasActive = alarms.some((a) => a.status === 'SCHEDULED' || a.status === 'ACTIVE_GEOFENCE');
+  const hasTime = alarms.some((a) => a.status === 'SCHEDULED');
   const hasPlaces = alarms.some((a) => a.status === 'ACTIVE_GEOFENCE');
+  const alarmKitCoversTime = Platform.OS === 'ios' && permissions.systemAlarms === 'granted';
+  const needsNotifications = hasPlaces || (hasTime && !alarmKitCoversTime);
 
   let message: string | null = null;
   let action: (() => Promise<unknown>) | null = null;
   let denied = false;
 
-  if (permissions.notifications !== 'granted' && hasActive) {
+  if (permissions.notifications !== 'granted' && needsNotifications) {
     message = 'Notiser är avstängda – dina larm kommer inte att ringa.';
     denied = permissions.notifications === 'denied';
     action = requestNotificationPermission;
@@ -40,6 +43,9 @@ export function PermissionBanner({ permissions, alarms, onChanged }: Props) {
     message = 'Platslarm kräver platsåtkomst "Tillåt alltid".';
     denied = permissions.locationBackground === 'denied';
     action = requestLocationPermissions;
+  } else if (Platform.OS === 'android' && !permissions.fullScreenAlarms && hasTime) {
+    message = 'Helskärmslarm är avstängda – larm visas bara som notis på låsskärmen.';
+    action = async () => openFullScreenAlarmSettings();
   }
 
   if (!message) return null;
