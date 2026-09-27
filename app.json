@@ -80,6 +80,12 @@
           }
         }
       ]
-    ]
+    ],
+    "owner": "stellan76",
+    "extra": {
+      "eas": {
+        "projectId": "89826536-4900-4f32-bf0d-efd3094e9417"
+      }
+    }
   }
 }
