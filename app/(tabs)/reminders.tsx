@@ -1,20 +1,19 @@
 import * as Haptics from 'expo-haptics';
-import { Link, Stack, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, SectionList, Text, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { AlarmCard } from '../src/components/AlarmCard';
-import { PermissionBanner } from '../src/components/PermissionBanner';
-import { Button, Icon } from '../src/components/ui';
-import { useSnackbar } from '../src/components/UndoSnackbar';
-import { buildSections, SectionKey } from '../src/logic/sections';
-import { completeAlarm, removeAlarm, restoreAlarm } from '../src/services/alarms';
-import { toggleChecklistItem } from '../src/services/db';
-import { usePermissions } from '../src/services/permissions';
-import { acceptFriendAlarm, declineFriendAlarm } from '../src/services/pushSync';
-import { useAlarms } from '../src/state/useAlarms';
-import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../src/theme';
-import { LocalAlarm } from '../src/types';
+import { AlarmCard } from '../../src/components/AlarmCard';
+import { PermissionBanner } from '../../src/components/PermissionBanner';
+import { Button, Icon } from '../../src/components/ui';
+import { useSnackbar } from '../../src/components/UndoSnackbar';
+import { buildSections, SectionKey } from '../../src/logic/sections';
+import { completeAlarm, removeAlarm, restoreAlarm } from '../../src/services/alarms';
+import { toggleChecklistItem } from '../../src/services/db';
+import { usePermissions } from '../../src/services/permissions';
+import { acceptFriendAlarm, declineFriendAlarm } from '../../src/services/pushSync';
+import { useAlarms } from '../../src/state/useAlarms';
+import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../../src/theme';
+import { LocalAlarm } from '../../src/types';
 
 /** "Nu" som uppdateras varje halvminut, så att nedräkningar och sektioner hålls aktuella. */
 function useNow(intervalMs = 30_000): Date {
@@ -26,10 +25,9 @@ function useNow(intervalMs = 30_000): Date {
   return now;
 }
 
-export default function AlarmListScreen() {
+export default function RemindersScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const snackbar = useSnackbar();
   const alarms = useAlarms();
@@ -90,29 +88,13 @@ export default function AlarmListScreen() {
 
   return (
     <View style={styles.screen}>
-      <Stack.Screen
-        options={{
-          headerRight: () => (
-            <Link href="/settings" asChild>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Inställningar"
-                hitSlop={8}
-                style={styles.headerButton}
-              >
-                <Icon name="settings-outline" size={24} color={colors.accentText} />
-              </Pressable>
-            </Link>
-          ),
-        }}
-      />
 
       <SectionList
         contentInsetAdjustmentBehavior="automatic"
         sections={sections}
         keyExtractor={(item) => item.id}
         stickySectionHeadersEnabled={false}
-        contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 110 }]}
+        contentContainerStyle={[styles.list, { paddingBottom: 110 }]}
         ListHeaderComponent={
           <PermissionBanner permissions={permissions} alarms={alarms} onChanged={refreshPermissions} />
         }
@@ -178,7 +160,7 @@ export default function AlarmListScreen() {
           onPress={() => router.push('/new')}
           style={({ pressed }) => [
             styles.fab,
-            { bottom: insets.bottom + spacing.xl },
+            { bottom: spacing.xl },
             pressed && { opacity: 0.85 },
           ]}
         >
@@ -192,7 +174,6 @@ export default function AlarmListScreen() {
 const useStyles = makeStyles(({ colors }) => ({
   screen: { flex: 1, backgroundColor: colors.background },
   list: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, flexGrow: 1 },
-  headerButton: { minWidth: MIN_TOUCH, minHeight: MIN_TOUCH, alignItems: 'center', justifyContent: 'center' },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',

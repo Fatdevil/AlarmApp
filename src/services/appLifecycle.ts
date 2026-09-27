@@ -13,12 +13,14 @@ import {
   readNotificationData,
 } from './notifications';
 import { acceptFriendAlarm, declineFriendAlarm, registerBackgroundPushTask } from './pushSync';
+import { reconcileWakeAlarms, snoozeWake, wakeDismissed } from './wake';
 
 export async function initializeApp(): Promise<void> {
   const steps: [string, () => Promise<unknown>][] = [
     ['notiskanaler', initNotificationChannels],
     ['push-task', registerBackgroundPushTask],
     ['tidslarm', () => reconcileScheduledAlarms()],
+    ['väckning', () => reconcileWakeAlarms()],
     ['geofences', syncGeofencesWithOs],
   ];
   // Varje steg körs oberoende – ett fel i ett steg får inte stoppa de andra
@@ -45,6 +47,11 @@ export async function handleNotificationResponse(
   if (!data) return { focusAlarmId: null, error: null };
 
   try {
+    if (data.kind === 'WAKE') {
+      if (response.actionIdentifier === ACTION_SNOOZE) await snoozeWake(data.alarmId);
+      else if (response.actionIdentifier === ACTION_DONE) await wakeDismissed(data.alarmId);
+      return { focusAlarmId: null, error: null };
+    }
     switch (response.actionIdentifier) {
       case ACTION_DONE:
         await acknowledgeAlarm(data.alarmId);

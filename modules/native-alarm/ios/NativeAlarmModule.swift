@@ -41,7 +41,8 @@ public class NativeAlarmModule: Module {
       return "unavailable"
     }
 
-    AsyncFunction("schedule") { (id: String, title: String, timestampMs: Double, hour: Int, minute: Int, weekdays: [Int]) async throws in
+    // groupId används bara på Android (AlarmKit saknar motsvarighet utan App Intents)
+    AsyncFunction("schedule") { (id: String, title: String, timestampMs: Double, hour: Int, minute: Int, weekdays: [Int], _: String) async throws in
       #if canImport(AlarmKit)
       if #available(iOS 26.0, *) {
         guard let uuid = UUID(uuidString: id) else {

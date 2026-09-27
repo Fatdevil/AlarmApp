@@ -6,6 +6,7 @@ import * as Haptics from 'expo-haptics';
 import React from 'react';
 import {
   ActivityIndicator,
+  ColorValue,
   Pressable,
   PressableProps,
   StyleProp,
@@ -17,7 +18,7 @@ import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../
 
 export type IconName = React.ComponentProps<typeof Ionicons>['name'];
 
-export function Icon({ name, size = 20, color }: { name: IconName; size?: number; color?: string }) {
+export function Icon({ name, size = 20, color }: { name: IconName; size?: number; color?: ColorValue }) {
   const { colors } = useTheme();
   return (
     <Ionicons

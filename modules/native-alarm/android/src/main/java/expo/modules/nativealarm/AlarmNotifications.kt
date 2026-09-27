@@ -53,6 +53,7 @@ object AlarmNotifications {
       Intent(context, AlarmActivity::class.java)
         .putExtra(AlarmScheduler.EXTRA_ID, alarm.id)
         .putExtra(AlarmActivity.EXTRA_TITLE, alarm.title)
+        .putExtra(AlarmScheduler.EXTRA_GROUP, alarm.groupId)
         .setData(Uri.parse("nativealarm://activity/" + Uri.encode(alarm.id)))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -81,14 +82,14 @@ object AlarmNotifications {
         Notification.Action.Builder(
           null,
           "Stäng av",
-          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_STOP, alarm.id),
+          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_STOP, alarm.id, alarm.groupId),
         ).build()
       )
       .addAction(
         Notification.Action.Builder(
           null,
           "Snooza ${AlarmScheduler.SNOOZE_MINUTES} min",
-          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_SNOOZE, alarm.id),
+          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_SNOOZE, alarm.id, alarm.groupId),
         ).build()
       )
       .build()

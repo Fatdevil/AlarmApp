@@ -16,6 +16,8 @@ data class StoredAlarm(
   val hour: Int,
   val minute: Int,
   val weekdays: Set<Int>,
+  /** Väckningsserie: larm med samma groupId hoppas över när ett av dem stängs av. */
+  val groupId: String = "",
 ) {
   val isRepeating: Boolean get() = weekdays.isNotEmpty()
 
@@ -43,6 +45,7 @@ data class StoredAlarm(
     .put("hour", hour)
     .put("minute", minute)
     .put("weekdays", JSONArray(weekdays.toList()))
+    .put("groupId", groupId)
 
   companion object {
     fun fromJson(o: JSONObject): StoredAlarm {
@@ -54,6 +57,7 @@ data class StoredAlarm(
         hour = o.getInt("hour"),
         minute = o.getInt("minute"),
         weekdays = (0 until days.length()).map { days.getInt(it) }.toSet(),
+        groupId = o.optString("groupId", ""),
       )
     }
   }

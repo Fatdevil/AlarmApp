@@ -54,7 +54,7 @@ export function SnackbarProvider({ children }: { children: React.ReactNode }) {
           key={message.id}
           entering={FadeInDown}
           exiting={FadeOutDown}
-          style={[styles.container, { bottom: insets.bottom + spacing.lg }]}
+          style={[styles.container, { bottom: insets.bottom + 64 }]}
           accessibilityLiveRegion="polite"
         >
           <View style={styles.bar}>

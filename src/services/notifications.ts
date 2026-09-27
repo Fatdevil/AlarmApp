@@ -9,6 +9,7 @@ import {
 } from '../../modules/native-alarm';
 import { SNOOZE_MINUTES } from '../constants';
 import { WEEKDAY_NUMBERS } from '../logic/time';
+import { formatHM, SchedulePlan, WakeAlarm } from '../logic/wake';
 import { LocalAlarm } from '../types';
 
 /**
@@ -27,7 +28,7 @@ export const ACTION_SNOOZE = 'SNOOZE';
 export const ACTION_ACCEPT = 'ACCEPT';
 export const ACTION_DECLINE = 'DECLINE';
 
-export type NotificationKind = 'ALARM' | 'FRIEND_REQUEST';
+export type NotificationKind = 'ALARM' | 'FRIEND_REQUEST' | 'WAKE';
 
 export interface AlarmNotificationData extends Record<string, unknown> {
   kind: NotificationKind;
@@ -197,6 +198,130 @@ async function scheduleNotificationAlarm(alarm: LocalAlarm, first: Date, now: Da
   return ids;
 }
 
+// --- VÄCKARKLOCKA ---
+
+function wakeTitle(wake: WakeAlarm): string {
+  return wake.label.trim() || 'Väckning';
+}
+
+function wakeContent(wake: WakeAlarm, title: string): Notifications.NotificationContentInput {
+  const data: AlarmNotificationData = { kind: 'WAKE', alarmId: wake.id };
+  return {
+    title,
+    body: `${formatHM(wake.hour, wake.minute)} – dags att vakna`,
+    sound: Platform.OS === 'ios' ? 'defaultRingtone' : true,
+    priority: Notifications.AndroidNotificationPriority.MAX,
+    interruptionLevel: 'timeSensitive',
+    categoryIdentifier: ALARM_CATEGORY,
+    data,
+  };
+}
+
+/**
+ * Schemalägger en väckningsplan i OS. Systemlarm (AlarmKit/AlarmManager) när de är
+ * tillåtna, annars notiser. Allt eller inget: misslyckas något avbryts det som hunnit schemaläggas.
+ */
+export async function scheduleWakePlan(wake: WakeAlarm, plan: SchedulePlan): Promise<string[]> {
+  if (!plan.repeating && plan.fixed.length === 0) return [];
+  const title = wakeTitle(wake);
+  const ids: string[] = [];
+
+  if ((await getNativeAlarmAuthorization()) === 'authorized') {
+    try {
+      if (plan.repeating) {
+        const first = new Date();
+        first.setHours(plan.repeating.hour, plan.repeating.minute, 0, 0);
+        const id = Crypto.randomUUID().toLowerCase();
+        await scheduleNativeAlarm({
+          id,
+          title,
+          date: first,
+          weekdays: plan.repeating.weekdays,
+          groupId: wake.seriesId ?? undefined,
+        });
+        ids.push(NATIVE_PREFIX + id);
+      }
+      for (const date of plan.fixed) {
+        const id = Crypto.randomUUID().toLowerCase();
+        await scheduleNativeAlarm({ id, title, date, weekdays: [], groupId: wake.seriesId ?? undefined });
+        ids.push(NATIVE_PREFIX + id);
+      }
+      return ids;
+    } catch (err) {
+      console.warn('[Notifications] Systemlarm misslyckades, använder notiser:', err);
+      await cancelNotifications(ids);
+      ids.length = 0;
+    }
+  }
+
+  const content = wakeContent(wake, `⏰ ${title}`);
+  try {
+    if (plan.repeating) {
+      const { hour, minute, weekdays } = plan.repeating;
+      if (weekdays.length === 7) {
+        ids.push(
+          await Notifications.scheduleNotificationAsync({
+            content,
+            trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour, minute, channelId: ALARM_CHANNEL_ID },
+          })
+        );
+      } else {
+        for (const weekday of weekdays) {
+          ids.push(
+            await Notifications.scheduleNotificationAsync({
+              content,
+              trigger: {
+                type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
+                weekday,
+                hour,
+                minute,
+                channelId: ALARM_CHANNEL_ID,
+              },
+            })
+          );
+        }
+      }
+    }
+    for (const date of plan.fixed) {
+      ids.push(
+        await Notifications.scheduleNotificationAsync({
+          content,
+          trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date, channelId: ALARM_CHANNEL_ID },
+        })
+      );
+    }
+  } catch (err) {
+    await cancelNotifications(ids);
+    throw err;
+  }
+  return ids;
+}
+
+export async function scheduleWakeSnooze(wake: WakeAlarm, now: Date = new Date()): Promise<string> {
+  return Notifications.scheduleNotificationAsync({
+    content: wakeContent(wake, `⏰ ${wakeTitle(wake)} (snoozat)`),
+    trigger: {
+      type: Notifications.SchedulableTriggerInputTypes.DATE,
+      date: new Date(now.getTime() + SNOOZE_MINUTES * 60_000),
+      channelId: ALARM_CHANNEL_ID,
+    },
+  });
+}
+
+/** Vilka av de givna ID:na som OS fortfarande har schemalagda. */
+export async function stillScheduled(ids: string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const [requests, nativeIds] = await Promise.all([
+    Notifications.getAllScheduledNotificationsAsync(),
+    getScheduledNativeAlarmIds(),
+  ]);
+  const notif = new Set(requests.map((r) => r.identifier));
+  const native = new Set(nativeIds);
+  return ids.filter((id) =>
+    id.startsWith(NATIVE_PREFIX) ? native.has(id.slice(NATIVE_PREFIX.length)) : notif.has(id)
+  );
+}
+
 export async function scheduleSnooze(alarm: LocalAlarm, now: Date = new Date()): Promise<string> {
   return Notifications.scheduleNotificationAsync({
     content: alarmContent(alarm, '⏰ Larm (snoozat)'),
@@ -277,7 +402,7 @@ export function readNotificationData(
   if (
     data &&
     typeof data.alarmId === 'string' &&
-    (data.kind === 'ALARM' || data.kind === 'FRIEND_REQUEST')
+    (data.kind === 'ALARM' || data.kind === 'FRIEND_REQUEST' || data.kind === 'WAKE')
   ) {
     return { kind: data.kind, alarmId: data.alarmId };
   }

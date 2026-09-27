@@ -33,7 +33,7 @@ async function routeFromResponse(response: Notifications.NotificationResponse): 
   Notifications.clearLastNotificationResponse();
   if (outcome.error) Alert.alert('Kunde inte utföra åtgärden', outcome.error);
   if (outcome.focusAlarmId) {
-    router.navigate({ pathname: '/', params: { focus: outcome.focusAlarmId } });
+    router.navigate({ pathname: '/reminders', params: { focus: outcome.focusAlarmId } });
   }
 }
 
@@ -81,10 +81,8 @@ export default function RootLayout() {
         <SnackbarProvider>
           <StatusBar style={theme.dark ? 'light' : 'dark'} />
           <Stack screenOptions={{ contentStyle: { backgroundColor: theme.colors.background } }}>
-            <Stack.Screen
-              name="index"
-              options={{ title: 'Larm', headerLargeTitle: true, headerShadowVisible: false }}
-            />
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="wake-edit" options={{ title: 'Väckning', presentation: 'modal' }} />
             <Stack.Screen name="new" options={{ title: 'Nytt larm', presentation: 'modal' }} />
             <Stack.Screen name="settings" options={{ title: 'Inställningar' }} />
             <Stack.Screen name="diagnostics" options={{ title: 'Diagnostik' }} />

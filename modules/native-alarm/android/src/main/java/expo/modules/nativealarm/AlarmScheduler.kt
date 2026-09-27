@@ -12,10 +12,12 @@ object AlarmScheduler {
   const val ACTION_STOP = "expo.modules.nativealarm.STOP"
   const val ACTION_SNOOZE = "expo.modules.nativealarm.SNOOZE"
   const val EXTRA_ID = "alarmId"
+  const val EXTRA_GROUP = "groupId"
 
   const val SNOOZE_MINUTES = 10
   private const val SNOOZE_SUFFIX = ":snooze"
   private const val LATE_FIRE_GRACE_MS = 15 * 60 * 1000L
+  private const val GROUP_WINDOW_MS = 3 * 60 * 60 * 1000L
 
   fun canScheduleExact(context: Context): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
@@ -23,11 +25,11 @@ object AlarmScheduler {
   }
 
   /** Schemalägger (eller ersätter) ett larm med setAlarmClock – undantaget från Doze. */
-  fun schedule(context: Context, alarm: StoredAlarm) {
+  fun schedule(context: Context, alarm: StoredAlarm, after: Long = System.currentTimeMillis()) {
     if (!canScheduleExact(context)) {
       throw IllegalStateException("Exakta larm är inte tillåtna för appen")
     }
-    val trigger = alarm.nextTrigger() ?: throw IllegalArgumentException("Tiden har redan passerat")
+    val trigger = alarm.nextTrigger(after) ?: throw IllegalArgumentException("Tiden har redan passerat")
     val info = AlarmManager.AlarmClockInfo(trigger, openAppIntent(context, alarm.id))
     alarmManager(context).setAlarmClock(info, fireIntent(context, alarm.id))
     AlarmStore(context).put(alarm)
@@ -44,10 +46,36 @@ object AlarmScheduler {
   fun snooze(context: Context, id: String) {
     val store = AlarmStore(context)
     val baseId = id.removeSuffix(SNOOZE_SUFFIX)
-    val title = store.get(id)?.title ?: store.get(baseId)?.title ?: return
+    val source = store.get(id) ?: store.get(baseId)
+    val title = source?.title ?: return
     AlarmNotifications.dismiss(context, id)
     val at = System.currentTimeMillis() + SNOOZE_MINUTES * 60_000L
-    schedule(context, StoredAlarm(baseId + SNOOZE_SUFFIX, title, at, 0, 0, emptySet()))
+    schedule(context, StoredAlarm(baseId + SNOOZE_SUFFIX, title, at, 0, 0, emptySet(), source.groupId))
+  }
+
+  /**
+   * Väckningsserie: användaren har stängt av ett larm och är vaken. Övriga larm i
+   * gruppen som skulle ringa inom tre timmar hoppas över (återkommande larm flyttas
+   * till sitt nästa tillfälle, engångslarm tas bort).
+   */
+  fun skipRestOfGroup(context: Context, stoppedId: String, groupId: String) {
+    if (groupId.isEmpty()) return
+    val now = System.currentTimeMillis()
+    val stoppedBase = stoppedId.removeSuffix(SNOOZE_SUFFIX)
+    for (alarm in AlarmStore(context).all()) {
+      if (alarm.groupId != groupId || alarm.id.removeSuffix(SNOOZE_SUFFIX) == stoppedBase) continue
+      val next = alarm.nextTrigger(now) ?: continue
+      if (next - now > GROUP_WINDOW_MS) continue
+      if (alarm.isRepeating && !alarm.id.endsWith(SNOOZE_SUFFIX)) {
+        try {
+          schedule(context, alarm, after = next)
+        } catch (e: Exception) {
+          cancel(context, alarm.id)
+        }
+      } else {
+        cancel(context, alarm.id)
+      }
+    }
   }
 
   /** Anropas när ett larm har ringt: nästa tillfälle för upprepade, annars bort ur lagringen. */
@@ -114,11 +142,12 @@ object AlarmScheduler {
     )
   }
 
-  fun actionIntent(context: Context, action: String, id: String): PendingIntent {
+  fun actionIntent(context: Context, action: String, id: String, groupId: String): PendingIntent {
     val intent = Intent(context, AlarmReceiver::class.java)
       .setAction(action)
       .setData(Uri.parse("nativealarm://" + action.substringAfterLast('.').lowercase() + "/" + Uri.encode(id)))
       .putExtra(EXTRA_ID, id)
+      .putExtra(EXTRA_GROUP, groupId)
     return PendingIntent.getBroadcast(
       context,
       0,

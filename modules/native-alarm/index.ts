@@ -21,7 +21,8 @@ interface NativeAlarmModule {
     timestampMs: number,
     hour: number,
     minute: number,
-    weekdays: number[]
+    weekdays: number[],
+    groupId: string
   ): Promise<void>;
   cancel(id: string): Promise<void>;
   getScheduledIds(): Promise<string[]>;
@@ -57,6 +58,11 @@ export interface NativeAlarmSpec {
   date: Date;
   /** 1 = söndag … 7 = lördag. Tom = engångslarm. */
   weekdays: number[];
+  /**
+   * Väckningsserie. Android: när ett larm i gruppen stängs av hoppas resten av
+   * gruppens larm inom tre timmar över automatiskt.
+   */
+  groupId?: string;
 }
 
 export async function scheduleNativeAlarm(spec: NativeAlarmSpec): Promise<void> {
@@ -67,7 +73,8 @@ export async function scheduleNativeAlarm(spec: NativeAlarmSpec): Promise<void> 
     spec.date.getTime(),
     spec.date.getHours(),
     spec.date.getMinutes(),
-    spec.weekdays
+    spec.weekdays,
+    spec.groupId ?? ''
   );
 }
 

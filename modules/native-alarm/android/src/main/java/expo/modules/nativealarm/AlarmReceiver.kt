@@ -17,6 +17,7 @@ class AlarmReceiver : BroadcastReceiver() {
         }
         AlarmScheduler.ACTION_STOP -> {
           AlarmNotifications.dismiss(context, id)
+          AlarmScheduler.skipRestOfGroup(context, id, intent.getStringExtra(AlarmScheduler.EXTRA_GROUP) ?: "")
           context.sendBroadcast(Intent(AlarmActivity.ACTION_FINISH).setPackage(context.packageName))
         }
         AlarmScheduler.ACTION_SNOOZE -> {
