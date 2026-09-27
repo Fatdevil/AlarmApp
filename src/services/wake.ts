@@ -8,9 +8,11 @@
 import * as Crypto from 'expo-crypto';
 import {
   awakeSkips,
+  buildSeriesTimes,
   nextMatching,
   planKeyOf,
   planSchedule,
+  shiftWeekdays,
   upcomingOccurrence,
   WakeAlarm,
 } from '../logic/wake';
@@ -20,6 +22,7 @@ import {
   getWakeAlarms,
   saveWakeAlarm,
 } from './db';
+import { consumeNativeSkips } from '../../modules/native-alarm';
 import { logEvent } from './diagnostics';
 import {
   cancelNotifications,
@@ -60,7 +63,12 @@ async function applyPlan(wake: WakeAlarm, now: Date = new Date()): Promise<WakeA
   return updated;
 }
 
-function baseAlarm(input: WakeInput, now: Date, series?: { id: string; index: number }): WakeAlarm {
+function baseAlarm(
+  input: WakeInput,
+  now: Date,
+  series?: { id: string; index: number },
+  fireAt?: Date
+): WakeAlarm {
   return {
     id: `wake_${Crypto.randomUUID()}`,
     hour: input.hour,
@@ -75,7 +83,7 @@ function baseAlarm(input: WakeInput, now: Date, series?: { id: string; index: nu
     planKey: null,
     nextFireAt:
       input.weekdays.length === 0
-        ? nextMatching(input.hour, input.minute, [], now).toISOString()
+        ? (fireAt ?? nextMatching(input.hour, input.minute, [], now)).toISOString()
         : null,
     createdAt: now.toISOString(),
   };
@@ -94,13 +102,25 @@ export async function createWakeAlarms(
   const seriesId = count > 1 ? `series_${Crypto.randomUUID()}` : null;
   const created: WakeAlarm[] = [];
 
+  const slots = buildSeriesTimes(input.hour, input.minute, count, series?.intervalMinutes ?? 0);
+  // Engångsserie: alla larm räknas från seriens första tillfälle, så att ordningen
+  // behålls även om första klockslaget redan har passerat idag
+  const firstFire = nextMatching(input.hour, input.minute, [], now);
+
   try {
     for (let i = 0; i < count; i++) {
-      const total = (input.hour * 60 + input.minute + i * (series?.intervalMinutes ?? 0)) % 1440;
+      const slot = slots[i];
       const alarm = baseAlarm(
-        { ...input, hour: Math.floor(total / 60), minute: total % 60 },
+        {
+          ...input,
+          hour: slot.hour,
+          minute: slot.minute,
+          // Larm efter midnatt ringer dagen efter seriens startdag
+          weekdays: shiftWeekdays(input.weekdays, slot.dayOffset),
+        },
         now,
-        seriesId ? { id: seriesId, index: i } : undefined
+        seriesId ? { id: seriesId, index: i } : undefined,
+        new Date(firstFire.getTime() + slot.offsetMinutes * 60_000)
       );
       created.push(await applyPlan(alarm, now));
     }
@@ -235,15 +255,51 @@ export async function restoreWakeAlarms(snapshots: WakeAlarm[], now: Date = new 
 }
 
 /**
- * Vid appstart: stäm av databasen mot OS.
+ * För över överhoppningar som Android gjort på egen hand ("Jag är vaken" på
+ * larmskärmen) till databasen. Utan detta skulle appen tro att larmen saknas i OS
+ * och schemalägga dem igen – och larmen skulle ringa ändå.
+ */
+function withNativeSkips(alarm: WakeAlarm, skips: Map<string, Date>, now: Date): WakeAlarm {
+  if (skips.size === 0 || !alarm.enabled) return alarm;
+  let until: Date | null = null;
+  for (const id of alarm.osIds) {
+    if (!id.startsWith('native:')) continue;
+    const skip = skips.get(id.slice('native:'.length).toLowerCase());
+    if (skip && (!until || skip > until)) until = skip;
+  }
+  if (!until || until.getTime() <= now.getTime()) return alarm;
+  if (alarm.weekdays.length === 0) return { ...alarm, enabled: false };
+  const current = alarm.skipUntil ? new Date(alarm.skipUntil) : null;
+  if (current && current >= until) return alarm;
+  return { ...alarm, skipUntil: until.toISOString() };
+}
+
+/**
+ * Vid appstart och när appen kommer tillbaka till förgrunden: stäm av databasen mot OS.
+ * - överhoppningar som Android gjort själv förs över till databasen
  * - engångslarm som har ringt stängs av (som i Klocka-appen)
  * - planer som ändrats (t.ex. en överhoppning som passerat) schemaläggs om
  * - larm som saknas i OS (t.ex. efter återställd säkerhetskopia) schemaläggs om
  */
-export async function reconcileWakeAlarms(now: Date = new Date()): Promise<number> {
+let reconciling: Promise<number> | null = null;
+
+export function reconcileWakeAlarms(now: Date = new Date()): Promise<number> {
+  // Appstart och återkomst till förgrunden kan överlappa – kör aldrig två avstämningar samtidigt
+  reconciling ??= runReconcile(now).finally(() => {
+    reconciling = null;
+  });
+  return reconciling;
+}
+
+async function runReconcile(now: Date): Promise<number> {
   let changed = 0;
-  for (const alarm of getWakeAlarms()) {
+  const nativeSkips = await consumeNativeSkips().catch(() => new Map<string, Date>());
+
+  for (const stored of getWakeAlarms()) {
     try {
+      const alarm = withNativeSkips(stored, nativeSkips, now);
+      if (alarm !== stored) saveWakeAlarm(alarm);
+
       if (!alarm.enabled) {
         if (alarm.osIds.length > 0) {
           await cancelNotifications(alarm.osIds);
@@ -271,7 +327,7 @@ export async function reconcileWakeAlarms(now: Date = new Date()): Promise<numbe
         changed++;
       }
     } catch (err) {
-      console.warn(`[Wake] Kunde inte stämma av ${alarm.id}:`, err);
+      console.warn(`[Wake] Kunde inte stämma av ${stored.id}:`, err);
     }
   }
   return changed;

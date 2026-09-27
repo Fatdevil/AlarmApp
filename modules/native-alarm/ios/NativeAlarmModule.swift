@@ -84,6 +84,11 @@ public class NativeAlarmModule: Module {
       return []
     }
 
+    // Överhoppningar sker bara nativt på Android (se AlarmScheduler.skipRestOfGroup)
+    AsyncFunction("consumeSkips") { () -> [String: Double] in
+      return [:]
+    }
+
     // Helskärmsbehörighet finns bara på Android
     Function("canUseFullScreenIntent") { () -> Bool in
       return true

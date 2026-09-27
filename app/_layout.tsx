@@ -18,6 +18,7 @@ import {
   handleNotificationResponse,
   initializeApp,
 } from '../src/services/appLifecycle';
+import { reconcileWakeAlarms } from '../src/services/wake';
 import { refreshAlarms } from '../src/state/useAlarms';
 import { spacing, typography, useTheme } from '../src/theme';
 
@@ -65,7 +66,12 @@ export default function RootLayout() {
     const responseSub = Notifications.addNotificationResponseReceivedListener(routeFromResponse);
     const receivedSub = Notifications.addNotificationReceivedListener(handleNotificationReceived);
     const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') refreshAlarms();
+      if (state === 'active') {
+        // Android kan ha hoppat över larm i en serie medan appen var i bakgrunden
+        reconcileWakeAlarms()
+          .catch((err) => console.warn('[AppState] väckning:', err))
+          .finally(refreshAlarms);
+      }
     });
 
     return () => {

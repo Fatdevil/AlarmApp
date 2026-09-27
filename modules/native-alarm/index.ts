@@ -26,6 +26,7 @@ interface NativeAlarmModule {
   ): Promise<void>;
   cancel(id: string): Promise<void>;
   getScheduledIds(): Promise<string[]>;
+  consumeSkips(): Promise<Record<string, number>>;
   canUseFullScreenIntent(): boolean;
   openFullScreenIntentSettings(): void;
 }
@@ -88,6 +89,16 @@ export async function getScheduledNativeAlarmIds(): Promise<string[]> {
   if (!isNativeAlarmAvailable()) return [];
   const ids = await NativeModule!.getScheduledIds();
   return ids.map((id) => id.toLowerCase());
+}
+
+/**
+ * Larm som Android hoppat över på egen hand ("Jag är vaken" på larmskärmen):
+ * ID (gemener) → tidpunkt då överhoppningen upphör. Loggen töms vid läsning.
+ */
+export async function consumeNativeSkips(): Promise<Map<string, Date>> {
+  if (!isNativeAlarmAvailable()) return new Map();
+  const raw = await NativeModule!.consumeSkips();
+  return new Map(Object.entries(raw).map(([id, ms]) => [id.toLowerCase(), new Date(ms)]));
 }
 
 /** Android 14+: false om användaren har stängt av helskärmslarm för appen. */

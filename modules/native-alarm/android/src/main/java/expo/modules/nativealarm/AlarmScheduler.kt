@@ -66,6 +66,9 @@ object AlarmScheduler {
       if (alarm.groupId != groupId || alarm.id.removeSuffix(SNOOZE_SUFFIX) == stoppedBase) continue
       val next = alarm.nextTrigger(now) ?: continue
       if (next - now > GROUP_WINDOW_MS) continue
+      if (!alarm.id.endsWith(SNOOZE_SUFFIX)) {
+        SkipLog(context).record(alarm.id, next + 60_000L)
+      }
       if (alarm.isRepeating && !alarm.id.endsWith(SNOOZE_SUFFIX)) {
         try {
           schedule(context, alarm, after = next)
@@ -112,6 +115,9 @@ object AlarmScheduler {
   }
 
   fun scheduledIds(context: Context): List<String> = AlarmStore(context).all().map { it.id }
+
+  fun consumeSkips(context: Context): Map<String, Double> =
+    SkipLog(context).consume().mapValues { it.value.toDouble() }
 
   private fun alarmManager(context: Context) =
     context.getSystemService(Context.ALARM_SERVICE) as AlarmManager

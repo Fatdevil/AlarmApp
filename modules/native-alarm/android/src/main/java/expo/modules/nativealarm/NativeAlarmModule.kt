@@ -49,6 +49,11 @@ class NativeAlarmModule : Module() {
       AlarmScheduler.scheduledIds(context)
     }
 
+    // Larm som hoppats över av "Jag är vaken" på larmskärmen: ID → överhoppning upphör (ms)
+    AsyncFunction("consumeSkips") {
+      AlarmScheduler.consumeSkips(context)
+    }
+
     Function("canUseFullScreenIntent") {
       AlarmNotifications.canUseFullScreenIntent(context)
     }

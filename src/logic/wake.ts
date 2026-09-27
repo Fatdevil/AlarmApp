@@ -159,17 +159,39 @@ export function planKeyOf(plan: SchedulePlan): string {
   return `${r}|${plan.fixed.map((d) => d.toISOString()).join(',')}`;
 }
 
-/** Klockslag för en väckningsserie, t.ex. 06:00 + 5 × 10 min. */
+export interface SeriesSlot {
+  hour: number;
+  minute: number;
+  /** Antal dygn efter seriens första larm (1 när serien passerar midnatt). */
+  dayOffset: number;
+  /** Minuter efter seriens första larm. */
+  offsetMinutes: number;
+}
+
+/** Klockslag för en väckningsserie, t.ex. 06:00 + 5 × 10 min. Hanterar passage av midnatt. */
 export function buildSeriesTimes(
   hour: number,
   minute: number,
   count: number,
   intervalMinutes: number
-): { hour: number; minute: number }[] {
+): SeriesSlot[] {
   return Array.from({ length: count }, (_, i) => {
-    const total = (hour * 60 + minute + i * intervalMinutes) % (24 * 60);
-    return { hour: Math.floor(total / 60), minute: total % 60 };
+    const offsetMinutes = i * intervalMinutes;
+    const total = hour * 60 + minute + offsetMinutes;
+    const inDay = total % (24 * 60);
+    return {
+      hour: Math.floor(inDay / 60),
+      minute: inDay % 60,
+      dayOffset: Math.floor(total / (24 * 60)),
+      offsetMinutes,
+    };
   });
+}
+
+/** Flyttar veckodagar framåt, t.ex. mån–fre + 1 dygn = tis–lör (1 = söndag … 7 = lördag). */
+export function shiftWeekdays(weekdays: number[], dayOffset: number): number[] {
+  const shift = ((dayOffset % 7) + 7) % 7;
+  return weekdays.map((d) => ((d - 1 + shift) % 7) + 1).sort();
 }
 
 /** Fönster för "Jag är vaken": larm i serien som ringer inom så här lång tid hoppas över. */

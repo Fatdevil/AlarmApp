@@ -92,3 +92,25 @@ class AlarmStore(context: Context) {
     prefs.edit().remove(id).apply()
   }
 }
+
+/**
+ * Larm som Android hoppade över på egen hand ("Jag är vaken" i en serie), så att
+ * appen kan föra över överhoppningen till sin databas nästa gång den körs.
+ * Nyckel = larm-ID, värde = tidpunkten då överhoppningen upphör (ms).
+ */
+class SkipLog(context: Context) {
+  private val prefs = context.applicationContext
+    .getSharedPreferences("expo.modules.nativealarm.skips", Context.MODE_PRIVATE)
+
+  fun record(id: String, skippedUntilMillis: Long) {
+    prefs.edit().putLong(id, skippedUntilMillis).apply()
+  }
+
+  /** Returnerar och rensar loggen. */
+  fun consume(): Map<String, Long> {
+    val entries = prefs.all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
+    prefs.edit().clear().apply()
+    return entries
+  }
+}
+

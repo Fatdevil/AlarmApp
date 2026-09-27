@@ -2,6 +2,7 @@ import {
   awakeSkips,
   buildSeriesTimes,
   describeDays,
+  shiftWeekdays,
   nextWakeOccurrence,
   planKeyOf,
   planSchedule,
@@ -103,12 +104,12 @@ describe('planSchedule', () => {
 
 describe('väckningsserie', () => {
   it('bygger klockslag med intervall, även över midnatt', () => {
-    expect(buildSeriesTimes(6, 0, 3, 10)).toEqual([
+    expect(buildSeriesTimes(6, 0, 3, 10).map(({ hour, minute }) => ({ hour, minute }))).toEqual([
       { hour: 6, minute: 0 },
       { hour: 6, minute: 10 },
       { hour: 6, minute: 20 },
     ]);
-    expect(buildSeriesTimes(23, 50, 2, 15)[1]).toEqual({ hour: 0, minute: 5 });
+    expect(buildSeriesTimes(23, 50, 2, 15)[1]).toEqual({ hour: 0, minute: 5, dayOffset: 1, offsetMinutes: 15 });
   });
 
   it('"Jag är vaken" hoppar bara över larm inom fönstret', () => {
@@ -121,5 +122,13 @@ describe('väckningsserie', () => {
     const skips = awakeSkips(series, sat);
     expect([...skips.keys()]).toEqual(['b', 'c']); // a har redan ringt – nästa är imorgon
     expect(new Date(skips.get('b')!).getMinutes()).toBe(11);
+  });
+});
+
+describe('shiftWeekdays', () => {
+  it('flyttar vardagar ett dygn framåt (fre → lör, mån → tis)', () => {
+    expect(shiftWeekdays([2, 3, 4, 5, 6], 1)).toEqual([3, 4, 5, 6, 7]);
+    expect(shiftWeekdays([7], 1)).toEqual([1]);
+    expect(shiftWeekdays([2, 6], 0)).toEqual([2, 6]);
   });
 });
