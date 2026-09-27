@@ -25,6 +25,7 @@ interface NativeAlarmModule {
     groupId: string
   ): Promise<void>;
   cancel(id: string): Promise<void>;
+  cancelAll(): Promise<void>;
   getScheduledIds(): Promise<string[]>;
   consumeSkips(): Promise<Record<string, number>>;
   canUseFullScreenIntent(): boolean;
@@ -82,6 +83,12 @@ export async function scheduleNativeAlarm(spec: NativeAlarmSpec): Promise<void> 
 export async function cancelNativeAlarm(id: string): Promise<void> {
   if (!isNativeAlarmAvailable()) return;
   await NativeModule!.cancel(id);
+}
+
+/** Avbryter alla systemlarm som appen har schemalagt. */
+export async function cancelAllNativeAlarms(): Promise<void> {
+  if (!isNativeAlarmAvailable()) return;
+  await NativeModule!.cancelAll();
 }
 
 /** ID:n för larm som systemet fortfarande har schemalagda (gemener). */

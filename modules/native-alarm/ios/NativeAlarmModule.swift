@@ -74,6 +74,17 @@ public class NativeAlarmModule: Module {
       #endif
     }
 
+    AsyncFunction("cancelAll") {
+      #if canImport(AlarmKit)
+      if #available(iOS 26.0, *) {
+        let alarms = (try? AlarmManager.shared.alarms) ?? []
+        for alarm in alarms {
+          try? AlarmManager.shared.cancel(id: alarm.id)
+        }
+      }
+      #endif
+    }
+
     AsyncFunction("getScheduledIds") { () -> [String] in
       #if canImport(AlarmKit)
       if #available(iOS 26.0, *) {

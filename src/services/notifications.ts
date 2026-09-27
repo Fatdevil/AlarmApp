@@ -2,6 +2,7 @@ import * as Crypto from 'expo-crypto';
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import {
+  cancelAllNativeAlarms,
   cancelNativeAlarm,
   getNativeAlarmAuthorization,
   getScheduledNativeAlarmIds,
@@ -344,7 +345,9 @@ export async function cancelNotifications(ids: string[] | undefined): Promise<vo
   }
 }
 
+/** Avbryter allt appen har schemalagt: notiser och systemlarm (AlarmKit/AlarmManager). */
 export async function cancelAllScheduledNotifications(): Promise<void> {
+  await cancelAllNativeAlarms();
   await Notifications.cancelAllScheduledNotificationsAsync();
 }
 

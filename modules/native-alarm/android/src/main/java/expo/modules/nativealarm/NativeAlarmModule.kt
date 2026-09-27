@@ -45,6 +45,10 @@ class NativeAlarmModule : Module() {
       AlarmScheduler.cancel(context, id)
     }
 
+    AsyncFunction("cancelAll") {
+      AlarmScheduler.cancelAll(context)
+    }
+
     AsyncFunction("getScheduledIds") {
       AlarmScheduler.scheduledIds(context)
     }

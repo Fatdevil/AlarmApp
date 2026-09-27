@@ -4,6 +4,7 @@ jest.mock('expo-notifications', () => ({
   setNotificationHandler: jest.fn(),
   scheduleNotificationAsync: jest.fn(async () => 'notif-1'),
   cancelScheduledNotificationAsync: jest.fn(),
+  cancelAllScheduledNotificationsAsync: jest.fn(),
   getAllScheduledNotificationsAsync: jest.fn(async () => []),
   SchedulableTriggerInputTypes: { DATE: 'date', DAILY: 'daily', WEEKLY: 'weekly' },
   AndroidNotificationPriority: { MAX: 'max' },
@@ -12,6 +13,7 @@ jest.mock('../modules/native-alarm', () => ({
   getNativeAlarmAuthorization: jest.fn(async () => 'authorized'),
   scheduleNativeAlarm: jest.fn(async () => {}),
   cancelNativeAlarm: jest.fn(async () => {}),
+  cancelAllNativeAlarms: jest.fn(async () => {}),
   getScheduledNativeAlarmIds: jest.fn(async () => []),
 }));
 
@@ -19,6 +21,7 @@ jest.mock('../modules/native-alarm', () => ({
 import * as Notifications from 'expo-notifications';
 import * as Native from '../modules/native-alarm';
 import {
+  cancelAllScheduledNotifications,
   cancelNotifications,
   getScheduledByAlarm,
   scheduleTimeAlarm,
@@ -101,3 +104,12 @@ describe('getScheduledByAlarm', () => {
     expect(map.has(b.id)).toBe(false);
   });
 });
+
+describe('cancelAllScheduledNotifications', () => {
+  it('avbryter även systemlarm (annars ringer de efter "Radera all data")', async () => {
+    await cancelAllScheduledNotifications();
+    expect(Native.cancelAllNativeAlarms).toHaveBeenCalled();
+    expect(Notifications.cancelAllScheduledNotificationsAsync).toHaveBeenCalled();
+  });
+});
+

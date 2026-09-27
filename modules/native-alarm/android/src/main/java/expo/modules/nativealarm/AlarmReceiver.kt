@@ -21,7 +21,12 @@ class AlarmReceiver : BroadcastReceiver() {
           context.sendBroadcast(Intent(AlarmActivity.ACTION_FINISH).setPackage(context.packageName))
         }
         AlarmScheduler.ACTION_SNOOZE -> {
-          AlarmScheduler.snooze(context, id)
+          AlarmScheduler.snooze(
+            context,
+            id,
+            intent.getStringExtra(AlarmScheduler.EXTRA_TITLE),
+            intent.getStringExtra(AlarmScheduler.EXTRA_GROUP),
+          )
           context.sendBroadcast(Intent(AlarmActivity.ACTION_FINISH).setPackage(context.packageName))
         }
       }

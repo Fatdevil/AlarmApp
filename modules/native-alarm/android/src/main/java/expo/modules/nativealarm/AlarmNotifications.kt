@@ -82,14 +82,14 @@ object AlarmNotifications {
         Notification.Action.Builder(
           null,
           "Stäng av",
-          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_STOP, alarm.id, alarm.groupId),
+          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_STOP, alarm.id, alarm.groupId, alarm.title),
         ).build()
       )
       .addAction(
         Notification.Action.Builder(
           null,
           "Snooza ${AlarmScheduler.SNOOZE_MINUTES} min",
-          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_SNOOZE, alarm.id, alarm.groupId),
+          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_SNOOZE, alarm.id, alarm.groupId, alarm.title),
         ).build()
       )
       .build()

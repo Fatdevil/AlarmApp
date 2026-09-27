@@ -13,6 +13,7 @@ object AlarmScheduler {
   const val ACTION_SNOOZE = "expo.modules.nativealarm.SNOOZE"
   const val EXTRA_ID = "alarmId"
   const val EXTRA_GROUP = "groupId"
+  const val EXTRA_TITLE = "title"
 
   const val SNOOZE_MINUTES = 10
   private const val SNOOZE_SUFFIX = ":snooze"
@@ -43,14 +44,27 @@ object AlarmScheduler {
     }
   }
 
-  fun snooze(context: Context, id: String) {
+  /**
+   * Snooza ett larm som ringer. Ett engångslarm är redan borttaget ur lagringen när
+   * det ringer (se onFired), så titel och grupp skickas med i intentet som reserv.
+   */
+  fun snooze(context: Context, id: String, title: String? = null, groupId: String? = null) {
+    AlarmNotifications.dismiss(context, id)
     val store = AlarmStore(context)
     val baseId = id.removeSuffix(SNOOZE_SUFFIX)
     val source = store.get(id) ?: store.get(baseId)
-    val title = source?.title ?: return
-    AlarmNotifications.dismiss(context, id)
+    val snoozeTitle = source?.title ?: title ?: "Larm"
+    val snoozeGroup = source?.groupId ?: groupId ?: ""
     val at = System.currentTimeMillis() + SNOOZE_MINUTES * 60_000L
-    schedule(context, StoredAlarm(baseId + SNOOZE_SUFFIX, title, at, 0, 0, emptySet(), source.groupId))
+    schedule(context, StoredAlarm(baseId + SNOOZE_SUFFIX, snoozeTitle, at, 0, 0, emptySet(), snoozeGroup))
+  }
+
+  /** Avbryter alla larm (används när användaren raderar all data). */
+  fun cancelAll(context: Context) {
+    for (alarm in AlarmStore(context).all()) {
+      cancel(context, alarm.id)
+    }
+    SkipLog(context).consume()
   }
 
   /**
@@ -148,12 +162,13 @@ object AlarmScheduler {
     )
   }
 
-  fun actionIntent(context: Context, action: String, id: String, groupId: String): PendingIntent {
+  fun actionIntent(context: Context, action: String, id: String, groupId: String, title: String): PendingIntent {
     val intent = Intent(context, AlarmReceiver::class.java)
       .setAction(action)
       .setData(Uri.parse("nativealarm://" + action.substringAfterLast('.').lowercase() + "/" + Uri.encode(id)))
       .putExtra(EXTRA_ID, id)
       .putExtra(EXTRA_GROUP, groupId)
+      .putExtra(EXTRA_TITLE, title)
     return PendingIntent.getBroadcast(
       context,
       0,

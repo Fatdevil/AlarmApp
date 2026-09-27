@@ -125,7 +125,7 @@ class AlarmActivity : Activity() {
     })
     root.addView(button("Snooza ${AlarmScheduler.SNOOZE_MINUTES} min", "#263450") {
       try {
-        AlarmScheduler.snooze(this, id)
+        AlarmScheduler.snooze(this, id, title, groupId)
       } catch (e: Exception) {
         AlarmNotifications.dismiss(this, id)
       }
