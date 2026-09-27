@@ -4,13 +4,34 @@ Tids- och platslarm som körs helt på enheten. Expo SDK 57 · React Native 0.86
 
 ## Kom igång
 
-Appen använder bakgrundsgeofencing, push och egna notisknappar – det fungerar inte i Expo Go.
-Kör en **development build**:
+Appen använder bakgrundsgeofencing, push, systemlarm och egna notisknappar – det fungerar inte i Expo Go.
+Den behöver en **development build**.
+
+### Enklast: bygg i molnet via expo.dev (ingen Xcode/Android Studio)
+
+1. Koppla GitHub-repot till projektet på expo.dev.
+2. Starta ett bygge: plattform, gren och profil `development` (Android ger en APK att installera direkt).
+3. Skanna QR-koden med telefonen och installera.
+
+Profiler i `eas.json`:
+
+| Profil | Till för |
+|---|---|
+| `development` | Dev-klient för att testa på egen telefon |
+| `preview` | Installerbar app för interna testare (Android APK) |
+| `production` | Butiksversion (App Store / Google Play) |
+
+iPhone kräver ett Apple Developer-konto (99 USD/år), oavsett byggsätt.
+
+### Från terminalen
 
 ```sh
+git clone https://github.com/Fatdevil/AlarmApp.git
+cd AlarmApp
 npm install
-npx expo run:ios       # eller: npx expo run:android
-# alternativt molnbygge: eas build --profile development
+npx eas-cli login
+npx eas-cli build --profile development --platform android   # eller ios
+# alternativt lokalt: npx expo run:android / npx expo run:ios (kräver Android Studio / Xcode 26)
 ```
 
 ## Kontroller
