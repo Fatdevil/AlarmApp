@@ -22,11 +22,13 @@ import { reconcileWakeAlarms } from '../src/services/wake';
 import { refreshAlarms } from '../src/state/useAlarms';
 import { spacing, typography, useTheme } from '../src/theme';
 
-// Samma svar kan levereras både via getLastNotificationResponse och lyssnaren vid kallstart
+// Samma svar kan levereras både via getLastNotificationResponse och lyssnaren vid kallstart.
+// Återkommande notiser återanvänder request-ID:t, så leveransens tidpunkt ingår i nyckeln.
 const handledResponses = new Set<string>();
 
 async function routeFromResponse(response: Notifications.NotificationResponse): Promise<void> {
-  const key = `${response.notification.request.identifier}:${response.actionIdentifier}`;
+  const { notification, actionIdentifier } = response;
+  const key = `${notification.request.identifier}:${notification.date}:${actionIdentifier}`;
   if (handledResponses.has(key)) return;
   handledResponses.add(key);
 

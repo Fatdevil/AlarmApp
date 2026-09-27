@@ -40,8 +40,16 @@ export function extractSyncPayload(raw: unknown): Record<string, unknown> | null
   const candidates: unknown[] = [raw];
   if (isRecord(raw)) {
     candidates.push(raw.data, raw.body);
+    // SDK 57 bakgrundstask (Android + iOS): { data: { dataString, ...fält }, notification }
     if (isRecord(raw.data)) candidates.push(raw.data.body, raw.data.dataString);
     if (typeof raw.dataString === 'string') candidates.push(raw.dataString);
+    // Expo Notification-omslag (t.ex. från lyssnare): request.content.data
+    const request = isRecord(raw.request)
+      ? raw.request
+      : isRecord(raw.notification) && isRecord(raw.notification.request)
+        ? raw.notification.request
+        : null;
+    if (request && isRecord(request.content)) candidates.push(request.content.data);
   }
   for (const c of candidates) {
     let value = c;

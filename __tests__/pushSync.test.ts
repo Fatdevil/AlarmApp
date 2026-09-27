@@ -39,6 +39,24 @@ describe('extractSyncPayload', () => {
     expect(extractSyncPayload(raw)?.alarm).toEqual(alarm);
   });
 
+  it('hittar payload i iOS-formatet (data-fält + dataString)', () => {
+    const raw = {
+      data: { type: 'SYNC_GEOFENCE', alarm, dataString: null },
+      notification: null,
+      aps: {},
+    };
+    expect(extractSyncPayload(raw)?.alarm).toEqual(alarm);
+  });
+
+  it('hittar payload i ett Expo Notification-omslag', () => {
+    const raw = {
+      date: 1,
+      request: { identifier: 'x', content: { data: { type: 'SYNC_GEOFENCE', alarm } }, trigger: null },
+    };
+    expect(extractSyncPayload(raw)?.alarm).toEqual(alarm);
+    expect(extractSyncPayload({ notification: raw, actionIdentifier: 'y' })?.alarm).toEqual(alarm);
+  });
+
   it('ignorerar annan data', () => {
     expect(extractSyncPayload({ data: { type: 'OTHER' } })).toBeNull();
   });
