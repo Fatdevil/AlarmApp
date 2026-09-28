@@ -2,8 +2,16 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import { IOS_MAX_GEOFENCES, MIN_GEOFENCE_RADIUS_METERS } from '../constants';
+import { isTriggeringTransition, RegionDefinition, sameRegions } from '../logic/regionState';
 import { LocalAlarm } from '../types';
-import { findAlarmByLocationId, getAlarmsByStatus, updateAlarmStatus } from './db';
+import {
+  findAlarmByLocationId,
+  getAlarmsByStatus,
+  getRegionState,
+  pruneRegionStates,
+  setRegionState,
+  updateAlarmStatus,
+} from './db';
 import { logEvent } from './diagnostics';
 import { fireGeofenceNotification } from './notifications';
 
@@ -31,7 +39,10 @@ TaskManager.defineTask<GeofenceTaskData>(GEOFENCE_BACKGROUND_TASK, async ({ data
 
   const { eventType, region } = data;
   const isEnter = eventType === Location.GeofencingEventType.Enter;
-  const triggerType = isEnter ? 'ENTER_LOCATION' : 'EXIT_LOCATION';
+
+  // Spara läget först: även händelser som inte larmar behövs för att känna igen nästa passage
+  const previous = getRegionState(regionId);
+  setRegionState(regionId, isEnter ? 'INSIDE' : 'OUTSIDE');
 
   const alarm = findAlarmByLocationId(regionId);
 
@@ -40,8 +51,8 @@ TaskManager.defineTask<GeofenceTaskData>(GEOFENCE_BACKGROUND_TASK, async ({ data
     await syncGeofencesWithOs().catch((err) => console.warn('[GeofenceTask] Synk:', err));
     return;
   }
-  // Händelsen måste matcha larmets typ (vi registrerar bara rätt riktning, men var defensiv)
-  if (alarm.triggerType !== triggerType) return;
+  // Lägesbesked (efter registrering/omstart), dubbletter och fel riktning larmar inte
+  if (!isTriggeringTransition(previous, isEnter ? 'INSIDE' : 'OUTSIDE', alarm.triggerType)) return;
 
   await fireGeofenceNotification(alarm, isEnter);
   updateAlarmStatus(alarm.id, 'FIRED_LOCALLY');
@@ -61,16 +72,29 @@ TaskManager.defineTask<GeofenceTaskData>(GEOFENCE_BACKGROUND_TASK, async ({ data
   // ARKITEKTURPRINCIP 2 & 5: ingen status eller position skickas till någon server härifrån.
 });
 
-function toRegion(alarm: LocalAlarm): Location.LocationRegion {
+/** Båda riktningarna bevakas så att appen alltid vet om man är innanför eller utanför. */
+function toRegion(alarm: LocalAlarm): Location.LocationRegion & RegionDefinition {
   const loc = alarm.location!;
   return {
     identifier: loc.id,
     latitude: loc.latitude,
     longitude: loc.longitude,
     radius: loc.radius,
-    notifyOnEnter: alarm.triggerType === 'ENTER_LOCATION',
-    notifyOnExit: alarm.triggerType === 'EXIT_LOCATION',
+    notifyOnEnter: true,
+    notifyOnExit: true,
   };
+}
+
+async function registeredRegions(): Promise<RegionDefinition[] | null> {
+  try {
+    if (!(await TaskManager.isTaskRegisteredAsync(GEOFENCE_BACKGROUND_TASK))) return null;
+    const options = await TaskManager.getTaskOptionsAsync<{ regions?: RegionDefinition[] }>(
+      GEOFENCE_BACKGROUND_TASK
+    );
+    return options?.regions ?? null;
+  } catch {
+    return null; // Osäkert läge – registrera om hellre än att riskera att zoner saknas
+  }
 }
 
 export async function checkLocationPermissions(): Promise<{ foreground: boolean; background: boolean }> {
@@ -96,6 +120,7 @@ export async function syncGeofencesWithOs(): Promise<number> {
     if (await TaskManager.isTaskRegisteredAsync(GEOFENCE_BACKGROUND_TASK)) {
       await Location.stopGeofencingAsync(GEOFENCE_BACKGROUND_TASK);
     }
+    pruneRegionStates([]);
     return 0;
   }
 
@@ -107,7 +132,13 @@ export async function syncGeofencesWithOs(): Promise<number> {
   }
 
   const regions = active.slice(0, MAX_GEOFENCES).map(toRegion);
-  await Location.startGeofencingAsync(GEOFENCE_BACKGROUND_TASK, regions);
+  pruneRegionStates(regions.map((r) => r.identifier));
+
+  // Omregistrering nollställer OS-läget för alla zoner – gör den bara vid faktisk ändring
+  const current = await registeredRegions();
+  if (!current || !sameRegions(current, regions)) {
+    await Location.startGeofencingAsync(GEOFENCE_BACKGROUND_TASK, regions);
+  }
   return regions.length;
 }
 

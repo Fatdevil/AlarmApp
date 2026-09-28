@@ -10,6 +10,7 @@ import {
   RepeatRule,
   TriggerType,
 } from '../types';
+import { ObservedRegionState, RegionState } from '../logic/regionState';
 import { WakeAlarm } from '../logic/wake';
 import { sanitizeDiagnosticLogs } from './sanitizer';
 
@@ -119,6 +120,16 @@ const MIGRATIONS: (() => void)[] = [
         createdAt TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_wake_series ON wake_alarms(seriesId);
+    `);
+  },
+  // v6: senast kända läge per zon (skiljer lägesbesked från verkliga passager)
+  () => {
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS region_states (
+        regionId TEXT PRIMARY KEY,
+        state TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
+      );
     `);
   },
 ];
@@ -358,6 +369,33 @@ export function setSetting(key: string, value: string): void {
   db.runSync('INSERT OR REPLACE INTO app_settings (key, value) VALUES (?, ?)', [key, value]);
 }
 
+// --- ZONLÄGEN ---
+
+export function getRegionState(regionId: string): RegionState {
+  const row = db.getFirstSync<{ state: string }>('SELECT state FROM region_states WHERE regionId = ?', [
+    regionId,
+  ]);
+  return row?.state === 'INSIDE' || row?.state === 'OUTSIDE' ? row.state : 'UNKNOWN';
+}
+
+export function setRegionState(regionId: string, state: ObservedRegionState): void {
+  db.runSync('INSERT OR REPLACE INTO region_states (regionId, state, updatedAt) VALUES (?, ?, ?)', [
+    regionId,
+    state,
+    new Date().toISOString(),
+  ]);
+}
+
+/** Tar bort lägen för zoner som inte längre bevakas. */
+export function pruneRegionStates(keepRegionIds: string[]): void {
+  if (keepRegionIds.length === 0) {
+    db.runSync('DELETE FROM region_states');
+    return;
+  }
+  const placeholders = keepRegionIds.map(() => '?').join(', ');
+  db.runSync(`DELETE FROM region_states WHERE regionId NOT IN (${placeholders})`, keepRegionIds);
+}
+
 // --- DIAGNOSTIKLOGG ---
 
 interface LogRow {
@@ -448,6 +486,7 @@ export function purgeAllLocalData(): void {
     db.runSync('DELETE FROM diagnostic_logs');
     db.runSync('DELETE FROM alarms');
     db.runSync('DELETE FROM wake_alarms');
+    db.runSync('DELETE FROM region_states');
   });
   db.execSync('VACUUM');
   notifyChange();

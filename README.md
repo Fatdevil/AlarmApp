@@ -91,3 +91,6 @@ Om modulen saknas eller behörighet nekas används `expo-notifications` automati
 - [ ] iOS: väckningsserie, tryck "Jag är vaken" i appen → resten ringer inte
 - [ ] "Hoppa över nästa" på ett vardagslarm → ringer inte nästa gång, men gången därefter
 - [ ] Engångsväckning visas som avstängd efter att den har ringt
+- [ ] Platslarm "lämnar Jobbet" skapat hemma → larmar inte direkt; larmar först när du lämnar jobbet
+- [ ] Platslarm "kommer hem" skapat hemma → larmar inte direkt; larmar när du går och kommer tillbaka
+- [ ] Skapa/ta bort ett annat platslarm → befintliga platslarm larmar inte av omregistreringen
