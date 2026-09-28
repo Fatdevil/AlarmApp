@@ -10,7 +10,7 @@ import {
 } from '../../modules/native-alarm';
 import { SNOOZE_MINUTES } from '../constants';
 import { WEEKDAY_NUMBERS } from '../logic/time';
-import { formatHM, SchedulePlan, WakeAlarm } from '../logic/wake';
+import { formatHM, isSkipping, SchedulePlan, WakeAlarm } from '../logic/wake';
 import { LocalAlarm } from '../types';
 
 /**
@@ -193,13 +193,15 @@ async function scheduleNotificationAlarm(alarm: LocalAlarm, first: Date, now: Da
       );
     }
   } catch (err) {
-    await cancelNotifications(ids);
+    await cancelNotificationsBestEffort(ids);
     throw err;
   }
   return ids;
 }
 
 // --- VÄCKARKLOCKA ---
+
+const OPEN_APP_TO_CONTINUE = 'öppna appen så fortsätter larmet';
 
 function wakeTitle(wake: WakeAlarm): string {
   return wake.label.trim() || 'Väckning';
@@ -226,9 +228,29 @@ export async function scheduleWakePlan(wake: WakeAlarm, plan: SchedulePlan): Pro
   if (!plan.repeating && plan.fixed.length === 0) return [];
   const title = wakeTitle(wake);
   const ids: string[] = [];
+  // Överhoppning där serien inte kan startas vid ett datum (iOS, notiser): den
+  // överhoppade veckodagen täcks av enskilda larm. Det sista säger till att appen
+  // behöver öppnas, annars upphör den veckodagen när täckningen tar slut.
+  const lastCover = wake.weekdays.length > 0 && plan.fixed.length > 0 ? plan.fixed[plan.fixed.length - 1] : null;
 
   if ((await getNativeAlarmAuthorization()) === 'authorized') {
     try {
+      if (Platform.OS === 'android' && wake.weekdays.length > 0 && isSkipping(wake)) {
+        // Android kan starta serien efter det överhoppade tillfället – då behövs
+        // inga ersättningslarm, och larmet fortsätter även om appen aldrig öppnas.
+        const first = new Date();
+        first.setHours(wake.hour, wake.minute, 0, 0);
+        const id = Crypto.randomUUID().toLowerCase();
+        await scheduleNativeAlarm({
+          id,
+          title,
+          date: first,
+          weekdays: wake.weekdays,
+          startAt: new Date(wake.skipUntil!),
+          groupId: wake.seriesId ?? undefined,
+        });
+        return [NATIVE_PREFIX + id];
+      }
       if (plan.repeating) {
         const first = new Date();
         first.setHours(plan.repeating.hour, plan.repeating.minute, 0, 0);
@@ -244,13 +266,19 @@ export async function scheduleWakePlan(wake: WakeAlarm, plan: SchedulePlan): Pro
       }
       for (const date of plan.fixed) {
         const id = Crypto.randomUUID().toLowerCase();
-        await scheduleNativeAlarm({ id, title, date, weekdays: [], groupId: wake.seriesId ?? undefined });
+        await scheduleNativeAlarm({
+          id,
+          title: date === lastCover ? `${title} – ${OPEN_APP_TO_CONTINUE}` : title,
+          date,
+          weekdays: [],
+          groupId: wake.seriesId ?? undefined,
+        });
         ids.push(NATIVE_PREFIX + id);
       }
       return ids;
     } catch (err) {
       console.warn('[Notifications] Systemlarm misslyckades, använder notiser:', err);
-      await cancelNotifications(ids);
+      await cancelNotificationsBestEffort(ids);
       ids.length = 0;
     }
   }
@@ -286,13 +314,13 @@ export async function scheduleWakePlan(wake: WakeAlarm, plan: SchedulePlan): Pro
     for (const date of plan.fixed) {
       ids.push(
         await Notifications.scheduleNotificationAsync({
-          content,
+          content: date === lastCover ? wakeContent(wake, `⏰ ${title} – ${OPEN_APP_TO_CONTINUE}`) : content,
           trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date, channelId: ALARM_CHANNEL_ID },
         })
       );
     }
   } catch (err) {
-    await cancelNotifications(ids);
+    await cancelNotificationsBestEffort(ids);
     throw err;
   }
   return ids;
@@ -347,15 +375,37 @@ export async function scheduleSnooze(alarm: LocalAlarm, now: Date = new Date()):
   });
 }
 
+/** Några larm kunde inte avbrytas i OS; [failedIds] måste sparas för ett nytt försök. */
+export class CancelNotificationsError extends Error {
+  constructor(readonly failedIds: string[]) {
+    super('Larmet kunde inte tas bort ur telefonens schema. Försök igen.');
+    this.name = 'CancelNotificationsError';
+  }
+}
+
+/**
+ * Avbryter notiser och systemlarm. Försöker med alla ID:n och kastar sedan
+ * CancelNotificationsError om något misslyckades – så att anroparen inte raderar
+ * de enda ID:n som behövs för att avbryta larmet senare. (Redan borttagna larm
+ * räknas inte som fel.)
+ */
 export async function cancelNotifications(ids: string[] | undefined): Promise<void> {
+  const failed: string[] = [];
   for (const id of ids ?? []) {
     try {
       if (id.startsWith(NATIVE_PREFIX)) await cancelNativeAlarm(id.slice(NATIVE_PREFIX.length));
       else await Notifications.cancelScheduledNotificationAsync(id);
     } catch (err) {
       console.warn('[Notifications] Kunde inte avbryta notis:', err);
+      failed.push(id);
     }
   }
+  if (failed.length > 0) throw new CancelNotificationsError(failed);
+}
+
+/** För återställning efter ett annat fel: avbryt så mycket som går, kasta aldrig. */
+export async function cancelNotificationsBestEffort(ids: string[] | undefined): Promise<void> {
+  await cancelNotifications(ids).catch(() => {});
 }
 
 /** Avbryter allt appen har schemalagt: notiser och systemlarm (AlarmKit/AlarmManager). */

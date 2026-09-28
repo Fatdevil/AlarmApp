@@ -16,6 +16,7 @@ import { logEvent } from './diagnostics';
 import { assertCanAddGeofence, syncGeofencesWithOs } from './geofence';
 import {
   cancelNotifications,
+  cancelNotificationsBestEffort,
   getScheduledByAlarm,
   scheduleSnooze,
   scheduleTimeAlarm,
@@ -30,7 +31,7 @@ export async function createAlarm(alarm: LocalAlarm): Promise<LocalAlarm> {
     try {
       saveAlarm(saved);
     } catch (err) {
-      await cancelNotifications(notificationIds);
+      await cancelNotificationsBestEffort(notificationIds);
       throw err;
     }
     await logEvent('ALARM_SCHEDULED', alarm.id, {

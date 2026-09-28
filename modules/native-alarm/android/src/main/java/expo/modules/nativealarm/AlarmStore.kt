@@ -21,18 +21,24 @@ data class StoredAlarm(
 ) {
   val isRepeating: Boolean get() = weekdays.isNotEmpty()
 
-  /** Nästa tillfälle efter [now], eller null för ett passerat engångslarm. */
+  /**
+   * Nästa tillfälle efter [now], eller null för ett passerat engångslarm. Ett
+   * återkommande larm ringer aldrig före [triggerAtMillis] – så kan "Hoppa över
+   * nästa" starta hela serien efter det överhoppade tillfället och fortsätta
+   * obegränsat, utan att appen behöver öppnas igen.
+   */
   fun nextTrigger(now: Long = System.currentTimeMillis()): Long? {
     if (!isRepeating) return if (triggerAtMillis > now) triggerAtMillis else null
+    val from = maxOf(now, triggerAtMillis - 1)
     val cal = Calendar.getInstance().apply {
-      timeInMillis = now
+      timeInMillis = from
       set(Calendar.HOUR_OF_DAY, hour)
       set(Calendar.MINUTE, minute)
       set(Calendar.SECOND, 0)
       set(Calendar.MILLISECOND, 0)
     }
     for (i in 0..7) {
-      if (cal.timeInMillis > now && cal.get(Calendar.DAY_OF_WEEK) in weekdays) return cal.timeInMillis
+      if (cal.timeInMillis > from && cal.get(Calendar.DAY_OF_WEEK) in weekdays) return cal.timeInMillis
       cal.add(Calendar.DAY_OF_YEAR, 1)
     }
     return null

@@ -26,7 +26,9 @@ import {
 import { consumeNativeSkips } from '../../modules/native-alarm';
 import { logEvent } from './diagnostics';
 import {
+  CancelNotificationsError,
   cancelNotifications,
+  cancelNotificationsBestEffort,
   hasPendingNativeSnooze,
   scheduleWakePlan,
   scheduleWakeSnooze,
@@ -67,10 +69,19 @@ async function applyPlan(wake: WakeAlarm, now: Date = new Date()): Promise<WakeA
   try {
     saveWakeAlarm(updated);
   } catch (err) {
-    await cancelNotifications(newIds);
+    await cancelNotificationsBestEffort(newIds);
     throw err;
   }
-  await cancelNotifications(wake.osIds.filter((id) => !newIds.includes(id)));
+  try {
+    await cancelNotifications(wake.osIds.filter((id) => !newIds.includes(id)));
+  } catch (err) {
+    // Den nya planen gäller, men gamla larm som inte gick att avbryta behålls så
+    // att nästa ändring eller radering försöker igen
+    if (!(err instanceof CancelNotificationsError)) throw err;
+    const retained: WakeAlarm = { ...updated, osIds: [...newIds, ...err.failedIds] };
+    saveWakeAlarm(retained);
+    return retained;
+  }
   return updated;
 }
 
@@ -137,7 +148,7 @@ export async function createWakeAlarms(
     }
   } catch (err) {
     for (const alarm of created) {
-      await cancelNotifications(alarm.osIds);
+      await cancelNotificationsBestEffort(alarm.osIds);
       deleteWakeAlarm(alarm.id);
     }
     throw err;

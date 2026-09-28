@@ -12,6 +12,7 @@ jest.mock('../src/services/notifications', () => ({
   scheduleTimeAlarm: jest.fn(),
   scheduleSnooze: jest.fn(),
   cancelNotifications: jest.fn(),
+  cancelNotificationsBestEffort: jest.fn(),
   getScheduledByAlarm: jest.fn(async () => new Map()),
 }));
 jest.mock('../src/services/geofence', () => ({
@@ -29,6 +30,7 @@ import {
   completeAlarm,
   createAlarm,
   reconcileScheduledAlarms,
+  removeAlarm,
   restoreAlarm,
 } from '../src/services/alarms';
 /* eslint-enable import/first */
@@ -73,13 +75,20 @@ describe('createAlarm (tid)', () => {
     expect(db.saveAlarm).not.toHaveBeenCalled();
   });
 
+  it('raderar inte larmet om det inte gick att avbryta i OS', async () => {
+    m(db.getAlarm).mockReturnValue(alarm({ notificationIds: ['n1'] }));
+    m(notif.cancelNotifications).mockRejectedValueOnce(new Error('OS svarar inte'));
+    await expect(removeAlarm('alarm_1')).rejects.toThrow('OS svarar inte');
+    expect(db.deleteAlarm).not.toHaveBeenCalled();
+  });
+
   it('avbryter OS-notisen om databasskrivningen misslyckas', async () => {
     m(notif.scheduleTimeAlarm).mockResolvedValue(['n1']);
     m(db.saveAlarm).mockImplementationOnce(() => {
       throw new Error('disk full');
     });
     await expect(createAlarm(alarm())).rejects.toThrow('disk full');
-    expect(notif.cancelNotifications).toHaveBeenCalledWith(['n1']);
+    expect(notif.cancelNotificationsBestEffort).toHaveBeenCalledWith(['n1']);
   });
 });
 

@@ -61,6 +61,11 @@ export interface NativeAlarmSpec {
   /** 1 = söndag … 7 = lördag. Tom = engångslarm. */
   weekdays: number[];
   /**
+   * Återkommande larm (Android): ringer inte före denna tidpunkt. Används efter
+   * "Hoppa över nästa" så att serien fortsätter obegränsat efter överhoppningen.
+   */
+  startAt?: Date;
+  /**
    * Väckningsserie. Android: när ett larm i gruppen stängs av hoppas resten av
    * gruppens larm inom tre timmar över automatiskt.
    */
@@ -72,7 +77,7 @@ export async function scheduleNativeAlarm(spec: NativeAlarmSpec): Promise<void> 
   await NativeModule!.schedule(
     spec.id,
     spec.title,
-    spec.date.getTime(),
+    (spec.startAt ?? spec.date).getTime(),
     spec.date.getHours(),
     spec.date.getMinutes(),
     spec.weekdays,

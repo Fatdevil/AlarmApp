@@ -63,6 +63,9 @@ Utöver det:
   På Android sker det automatiskt när man trycker "Jag är vaken" på larmskärmen, även om appen är stängd.
   På iOS (AlarmKit) görs det via knappen i appen.
 - **Hoppa över nästa** (håll inne på ett larm) – nästa tillfälle ringer inte, sedan fortsätter larmet som vanligt.
+  Android startar serien efter det överhoppade tillfället och fortsätter obegränsat. iOS och notiser kan inte
+  starta en återkommande serie vid ett datum: den veckodagen täcks av enskilda larm i 8 veckor, och det sista
+  ber användaren öppna appen (appen återställer serien vid varje start).
 - Engångslarm stängs av automatiskt när de har ringt.
 
 Logiken finns i `src/logic/wake.ts` (ren och testad), flödena i `src/services/wake.ts`.
@@ -90,6 +93,7 @@ Om modulen saknas eller behörighet nekas används `expo-notifications` automati
 - [ ] Väckningsserie 3 × 2 min: tryck "Jag är vaken" på första larmet (Android) → resten ringer inte
 - [ ] iOS: väckningsserie, tryck "Jag är vaken" i appen → resten ringer inte
 - [ ] "Hoppa över nästa" på ett vardagslarm → ringer inte nästa gång, men gången därefter
+- [ ] Android: "Hoppa över nästa", öppna inte appen → larmet fortsätter ringa veckorna efter
 - [ ] Engångsväckning visas som avstängd efter att den har ringt
 - [ ] Platslarm "lämnar Jobbet" skapat hemma → larmar inte direkt; larmar först när du lämnar jobbet
 - [ ] Platslarm "kommer hem" skapat hemma → larmar inte direkt; larmar när du går och kommer tillbaka
