@@ -3,9 +3,10 @@ import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import { IOS_MAX_GEOFENCES, MIN_GEOFENCE_RADIUS_METERS } from '../constants';
 import { isTriggeringTransition, RegionDefinition, sameRegions } from '../logic/regionState';
-import { LocalAlarm } from '../types';
+import { GeofenceLocation, LocalAlarm } from '../types';
 import {
-  findAlarmByLocationId,
+  clearRegionStates,
+  findActiveAlarmsByLocationId,
   getAlarmsByStatus,
   getRegionState,
   pruneRegionStates,
@@ -41,40 +42,46 @@ TaskManager.defineTask<GeofenceTaskData>(GEOFENCE_BACKGROUND_TASK, async ({ data
   const isEnter = eventType === Location.GeofencingEventType.Enter;
 
   // Spara läget först: även händelser som inte larmar behövs för att känna igen nästa passage
+  const observed = isEnter ? 'INSIDE' : 'OUTSIDE';
   const previous = getRegionState(regionId);
-  setRegionState(regionId, isEnter ? 'INSIDE' : 'OUTSIDE');
+  setRegionState(regionId, observed);
 
-  const alarm = findAlarmByLocationId(regionId);
+  // Flera larm kan dela samma zon (t.ex. "kommer hem" och "lämnar hemmet")
+  const alarms = findActiveAlarmsByLocationId(regionId);
 
-  // Larmet måste finnas och vara aktivt – annars är zonen kvarglömd i OS
-  if (!alarm || alarm.status !== 'ACTIVE_GEOFENCE') {
+  // Inga aktiva larm – zonen är kvarglömd i OS
+  if (alarms.length === 0) {
     await syncGeofencesWithOs().catch((err) => console.warn('[GeofenceTask] Synk:', err));
     return;
   }
   // Lägesbesked (efter registrering/omstart), dubbletter och fel riktning larmar inte
-  if (!isTriggeringTransition(previous, isEnter ? 'INSIDE' : 'OUTSIDE', alarm.triggerType)) return;
+  const due = alarms.filter((a) => isTriggeringTransition(previous, observed, a.triggerType));
+  if (due.length === 0) return;
 
-  await fireGeofenceNotification(alarm, isEnter);
-  updateAlarmStatus(alarm.id, 'FIRED_LOCALLY');
+  for (const alarm of due) {
+    await fireGeofenceNotification(alarm, isEnter);
+    updateAlarmStatus(alarm.id, 'FIRED_LOCALLY');
+  }
 
   // Avregistrera direkt: förhindrar upprepade larm och frigör iOS-platser
   await syncGeofencesWithOs().catch((err) => console.warn('[GeofenceTask] Synk:', err));
 
-  await logEvent(isEnter ? 'GEOFENCE_ENTER' : 'GEOFENCE_EXIT', regionId, {
-    locationSnapshot: {
-      latitude: region.latitude,
-      longitude: region.longitude,
-      accuracy: region.radius,
-    },
-    note: `Utlöst på enheten och avregistrerad. Larm: ${alarm.id}`,
-  }, 'BACKGROUND');
+  for (const alarm of due) {
+    await logEvent(isEnter ? 'GEOFENCE_ENTER' : 'GEOFENCE_EXIT', regionId, {
+      locationSnapshot: {
+        latitude: region.latitude,
+        longitude: region.longitude,
+        accuracy: region.radius,
+      },
+      note: `Utlöst på enheten och avregistrerad. Larm: ${alarm.id}`,
+    }, 'BACKGROUND');
+  }
 
   // ARKITEKTURPRINCIP 2 & 5: ingen status eller position skickas till någon server härifrån.
 });
 
 /** Båda riktningarna bevakas så att appen alltid vet om man är innanför eller utanför. */
-function toRegion(alarm: LocalAlarm): Location.LocationRegion & RegionDefinition {
-  const loc = alarm.location!;
+function toRegion(loc: GeofenceLocation): Location.LocationRegion & RegionDefinition {
   return {
     identifier: loc.id,
     latitude: loc.latitude,
@@ -83,6 +90,15 @@ function toRegion(alarm: LocalAlarm): Location.LocationRegion & RegionDefinition
     notifyOnEnter: true,
     notifyOnExit: true,
   };
+}
+
+/** En zon per plats-ID, i larmens ordning (nyaste först). */
+function uniquePlaces(alarms: LocalAlarm[]): GeofenceLocation[] {
+  const byId = new Map<string, GeofenceLocation>();
+  for (const a of alarms) {
+    if (a.location && !byId.has(a.location.id)) byId.set(a.location.id, a.location);
+  }
+  return [...byId.values()];
 }
 
 async function registeredRegions(): Promise<RegionDefinition[] | null> {
@@ -131,12 +147,16 @@ export async function syncGeofencesWithOs(): Promise<number> {
     );
   }
 
-  const regions = active.slice(0, MAX_GEOFENCES).map(toRegion);
-  pruneRegionStates(regions.map((r) => r.identifier));
+  const regions = uniquePlaces(active).slice(0, MAX_GEOFENCES).map(toRegion);
+  const ids = regions.map((r) => r.identifier);
+  pruneRegionStates(ids);
 
-  // Omregistrering nollställer OS-läget för alla zoner – gör den bara vid faktisk ändring
+  // Omregistrering får OS att skicka nya lägesbesked för alla zoner – gör den bara vid
+  // faktisk ändring, och glöm sparade lägen först: ett gammalt läge jämfört med ett
+  // nytt besked (t.ex. efter ändrad radie) skulle annars se ut som en passage.
   const current = await registeredRegions();
   if (!current || !sameRegions(current, regions)) {
+    clearRegionStates(ids);
     await Location.startGeofencingAsync(GEOFENCE_BACKGROUND_TASK, regions);
   }
   return regions.length;
@@ -148,10 +168,13 @@ export function assertCanAddGeofence(alarm: LocalAlarm): void {
   if (alarm.location.radius < MIN_GEOFENCE_RADIUS_METERS) {
     throw new Error(`Minsta radie är ${MIN_GEOFENCE_RADIUS_METERS} meter.`);
   }
-  const others = getAlarmsByStatus(['ACTIVE_GEOFENCE']).filter((a) => a.id !== alarm.id);
-  if (others.length >= MAX_GEOFENCES) {
+  // Gränsen gäller unika platser: larm som delar plats använder samma zon
+  const places = new Set(
+    uniquePlaces(getAlarmsByStatus(['ACTIVE_GEOFENCE']).filter((a) => a.id !== alarm.id)).map((l) => l.id)
+  );
+  if (!places.has(alarm.location.id) && places.size >= MAX_GEOFENCES) {
     throw new Error(
-      `Du kan ha högst ${MAX_GEOFENCES} aktiva platslarm samtidigt. Markera ett som klart först.`
+      `Du kan bevaka högst ${MAX_GEOFENCES} olika platser samtidigt. Markera ett platslarm som klart först.`
     );
   }
 }

@@ -239,12 +239,14 @@ export function getAlarmsByStatus(statuses: AlarmStatus[]): LocalAlarm[] {
     .map(rowToAlarm);
 }
 
-export function findAlarmByLocationId(locationId: string): LocalAlarm | null {
-  const row = db.getFirstSync<AlarmRow>(
-    "SELECT * FROM alarms WHERE json_extract(locationJson, '$.id') = ?",
-    [locationId]
-  );
-  return row ? rowToAlarm(row) : null;
+/** Alla aktiva platslarm som använder zonen (flera larm kan dela samma plats). */
+export function findActiveAlarmsByLocationId(locationId: string): LocalAlarm[] {
+  return db
+    .getAllSync<AlarmRow>(
+      "SELECT * FROM alarms WHERE json_extract(locationJson, '$.id') = ? AND status = 'ACTIVE_GEOFENCE'",
+      [locationId]
+    )
+    .map(rowToAlarm);
 }
 
 export function updateAlarmStatus(id: string, status: AlarmStatus, completedAt?: string | null): void {
@@ -384,6 +386,13 @@ export function setRegionState(regionId: string, state: ObservedRegionState): vo
     state,
     new Date().toISOString(),
   ]);
+}
+
+/** Glömmer läget för zonerna så att nästa besked från OS bara etablerar läget. */
+export function clearRegionStates(regionIds: string[]): void {
+  if (regionIds.length === 0) return;
+  const placeholders = regionIds.map(() => '?').join(', ');
+  db.runSync(`DELETE FROM region_states WHERE regionId IN (${placeholders})`, regionIds);
 }
 
 /** Tar bort lägen för zoner som inte längre bevakas. */
