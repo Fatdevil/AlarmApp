@@ -1,6 +1,8 @@
 import React from 'react';
 import { Platform, Text, View } from 'react-native';
 import { openFullScreenAlarmSettings } from '../../modules/native-alarm';
+import { activeAlarmKinds } from '../logic/permissionNeeds';
+import { WakeAlarm } from '../logic/wake';
 import { LocalAlarm } from '../types';
 import {
   openSystemSettings,
@@ -13,21 +15,21 @@ import { Button, Icon } from './ui';
 
 interface Props {
   permissions: PermissionSnapshot | null;
-  alarms: LocalAlarm[];
+  alarms?: LocalAlarm[];
+  wakeAlarms?: WakeAlarm[];
   onChanged: () => void;
 }
 
 /**
- * Visas överst på startsidan när en behörighet som aktiva larm är beroende av saknas.
+ * Visas överst i listorna när en behörighet som aktiva larm är beroende av saknas.
  * Utan detta kan larm tyst låta bli att ringa.
  */
-export function PermissionBanner({ permissions, alarms, onChanged }: Props) {
+export function PermissionBanner({ permissions, alarms, wakeAlarms, onChanged }: Props) {
   const styles = useStyles();
   const { colors } = useTheme();
   if (!permissions) return null;
 
-  const hasTime = alarms.some((a) => a.status === 'SCHEDULED');
-  const hasPlaces = alarms.some((a) => a.status === 'ACTIVE_GEOFENCE');
+  const { hasTime, hasPlaces } = activeAlarmKinds(alarms, wakeAlarms);
   const alarmKitCoversTime = Platform.OS === 'ios' && permissions.systemAlarms === 'granted';
   const needsNotifications = hasPlaces || (hasTime && !alarmKitCoversTime);
 

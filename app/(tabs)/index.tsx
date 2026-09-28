@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Alert, Pressable, ScrollView, Switch, Text, View } from 'react-native';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { PermissionBanner } from '../../src/components/PermissionBanner';
 import { Button, Icon } from '../../src/components/ui';
 import { useSnackbar } from '../../src/components/UndoSnackbar';
 import { formatCountdown, formatDayLabel } from '../../src/logic/time';
@@ -23,6 +24,7 @@ import {
   skipNextWake,
   unskipWake,
 } from '../../src/services/wake';
+import { usePermissions } from '../../src/services/permissions';
 import { useWakeAlarms } from '../../src/state/useAlarms';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../../src/theme';
 
@@ -62,6 +64,7 @@ export default function WakeScreen() {
   const router = useRouter();
   const snackbar = useSnackbar();
   const alarms = useWakeAlarms();
+  const { permissions, refresh: refreshPermissions } = usePermissions();
   const now = useNow();
 
   const groups = useMemo(() => groupAlarms(alarms), [alarms]);
@@ -192,6 +195,7 @@ export default function WakeScreen() {
       contentContainerStyle={styles.body}
       contentInsetAdjustmentBehavior="automatic"
     >
+      <PermissionBanner permissions={permissions} wakeAlarms={alarms} onChanged={refreshPermissions} />
       <View style={styles.hero} accessible accessibilityLiveRegion="polite">
         {next ? (
           <>

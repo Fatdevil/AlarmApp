@@ -11,7 +11,7 @@ import { completeAlarm, removeAlarm, restoreAlarm } from '../../src/services/ala
 import { toggleChecklistItem } from '../../src/services/db';
 import { usePermissions } from '../../src/services/permissions';
 import { acceptFriendAlarm, declineFriendAlarm } from '../../src/services/pushSync';
-import { useAlarms } from '../../src/state/useAlarms';
+import { useAlarms, useWakeAlarms } from '../../src/state/useAlarms';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../../src/theme';
 import { LocalAlarm } from '../../src/types';
 
@@ -31,6 +31,7 @@ export default function RemindersScreen() {
   const router = useRouter();
   const snackbar = useSnackbar();
   const alarms = useAlarms();
+  const wakeAlarms = useWakeAlarms();
   const now = useNow();
   const { permissions, refresh: refreshPermissions } = usePermissions();
   const { focus } = useLocalSearchParams<{ focus?: string }>();
@@ -96,7 +97,12 @@ export default function RemindersScreen() {
         stickySectionHeadersEnabled={false}
         contentContainerStyle={[styles.list, { paddingBottom: 110 }]}
         ListHeaderComponent={
-          <PermissionBanner permissions={permissions} alarms={alarms} onChanged={refreshPermissions} />
+          <PermissionBanner
+            permissions={permissions}
+            alarms={alarms}
+            wakeAlarms={wakeAlarms}
+            onChanged={refreshPermissions}
+          />
         }
         renderSectionHeader={({ section }) =>
           section.key === ('done' as SectionKey) ? (
