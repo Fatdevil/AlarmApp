@@ -24,6 +24,7 @@ import {
   cancelAllScheduledNotifications,
   cancelNotifications,
   getScheduledByAlarm,
+  hasPendingNativeSnooze,
   scheduleTimeAlarm,
 } from '../src/services/notifications';
 /* eslint-enable import/first */
@@ -102,6 +103,19 @@ describe('getScheduledByAlarm', () => {
     const map = await getScheduledByAlarm([a, b]);
     expect(map.get(a.id)).toEqual([`native:${UUID}`]);
     expect(map.has(b.id)).toBe(false);
+  });
+});
+
+describe('hasPendingNativeSnooze', () => {
+  it('känner igen en snooze som Android lagt för ett systemlarm', async () => {
+    (Native.getScheduledNativeAlarmIds as jest.Mock).mockResolvedValueOnce([`${UUID}:snooze`]);
+    await expect(hasPendingNativeSnooze([`native:${UUID}`])).resolves.toBe(true);
+  });
+
+  it('ignorerar själva larmet och notis-ID:n', async () => {
+    (Native.getScheduledNativeAlarmIds as jest.Mock).mockResolvedValueOnce([UUID]);
+    await expect(hasPendingNativeSnooze([`native:${UUID}`, 'notif-1'])).resolves.toBe(false);
+    await expect(hasPendingNativeSnooze(['notif-1'])).resolves.toBe(false);
   });
 });
 

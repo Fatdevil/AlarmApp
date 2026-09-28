@@ -33,6 +33,25 @@ export async function initializeApp(): Promise<void> {
   }
 }
 
+/**
+ * Appen kommer tillbaka till förgrunden. Användaren kan ha ändrat behörigheter i
+ * Inställningar (t.ex. gett "Tillåt alltid" för plats) och Android kan ha hoppat
+ * över larm i en serie medan appen låg i bakgrunden.
+ */
+export async function handleAppForeground(): Promise<void> {
+  const steps: [string, () => Promise<unknown>][] = [
+    ['väckning', () => reconcileWakeAlarms()],
+    ['geofences', syncGeofencesWithOs],
+  ];
+  for (const [name, step] of steps) {
+    try {
+      await step();
+    } catch (err) {
+      console.warn(`[AppState] ${name}:`, err);
+    }
+  }
+}
+
 export interface ResponseOutcome {
   /** Larm att lyfta fram på startsidan, om något. */
   focusAlarmId: string | null;

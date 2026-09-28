@@ -309,6 +309,19 @@ export async function scheduleWakeSnooze(wake: WakeAlarm, now: Date = new Date()
   });
 }
 
+/**
+ * Har telefonen själv lagt en snooze för något av de inbyggda larmen? (Android:
+ * "Snooza" på larmskärmen schemalägger `<id>:snooze` utan att appen är inblandad.)
+ */
+export async function hasPendingNativeSnooze(ids: string[]): Promise<boolean> {
+  const snoozeIds = ids
+    .filter((id) => id.startsWith(NATIVE_PREFIX))
+    .map((id) => `${id.slice(NATIVE_PREFIX.length)}:snooze`);
+  if (snoozeIds.length === 0) return false;
+  const scheduled = new Set(await getScheduledNativeAlarmIds());
+  return snoozeIds.some((id) => scheduled.has(id));
+}
+
 /** Vilka av de givna ID:na som OS fortfarande har schemalagda. */
 export async function stillScheduled(ids: string[]): Promise<string[]> {
   if (ids.length === 0) return [];

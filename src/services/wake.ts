@@ -6,6 +6,7 @@
  * något går fel på vägen.
  */
 import * as Crypto from 'expo-crypto';
+import { SNOOZE_MINUTES } from '../constants';
 import {
   awakeSkips,
   buildSeriesTimes,
@@ -26,10 +27,20 @@ import { consumeNativeSkips } from '../../modules/native-alarm';
 import { logEvent } from './diagnostics';
 import {
   cancelNotifications,
+  hasPendingNativeSnooze,
   scheduleWakePlan,
   scheduleWakeSnooze,
   stillScheduled,
 } from './notifications';
+
+let wakeLock: Promise<unknown> = Promise.resolve();
+
+/** Kör fn när tidigare låsta operationer är klara (avstämning och snooze). */
+function withWakeLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = wakeLock.then(fn, fn);
+  wakeLock = run.catch(() => {});
+  return run;
+}
 
 export interface WakeInput {
   hour: number;
@@ -227,12 +238,24 @@ export async function wakeDismissed(id: string, now: Date = new Date()): Promise
   if (fresh?.enabled && fresh.weekdays.length === 0) await setWakeEnabled(id, false, now);
 }
 
-export async function snoozeWake(id: string, now: Date = new Date()): Promise<void> {
-  const alarm = getWakeAlarm(id);
-  if (!alarm) return;
-  const snoozeId = await scheduleWakeSnooze(alarm, now);
-  // Sparas med larmet så att det avbryts om larmet raderas eller stängs av
-  saveWakeAlarm({ ...alarm, osIds: [...alarm.osIds, snoozeId] });
+export function snoozeWake(id: string, now: Date = new Date()): Promise<void> {
+  // Knappen öppnar appen, så en avstämning kan starta samtidigt – kör aldrig parallellt
+  return withWakeLock(async () => {
+    const alarm = getWakeAlarm(id);
+    if (!alarm) return;
+    const snoozeId = await scheduleWakeSnooze(alarm, now);
+    // Sparas med larmet så att det avbryts om larmet raderas eller stängs av
+    const snoozed: WakeAlarm = { ...alarm, osIds: [...alarm.osIds, snoozeId] };
+    if (alarm.weekdays.length === 0) {
+      // Engångslarm: snoozen är nu nästa tillfälle. Annars ser avstämningen det
+      // passerade ursprungstillfället, stänger av larmet och avbryter snoozen.
+      // Har en avstämning hunnit stänga av det redan, slås det på igen.
+      snoozed.enabled = true;
+      snoozed.nextFireAt = new Date(now.getTime() + SNOOZE_MINUTES * 60_000).toISOString();
+      snoozed.planKey = planKeyOf(planSchedule(snoozed, now));
+    }
+    saveWakeAlarm(snoozed);
+  });
 }
 
 /** Raderar larm och returnerar ögonblicksbilder för "Ångra". */
@@ -285,7 +308,7 @@ let reconciling: Promise<number> | null = null;
 
 export function reconcileWakeAlarms(now: Date = new Date()): Promise<number> {
   // Appstart och återkomst till förgrunden kan överlappa – kör aldrig två avstämningar samtidigt
-  reconciling ??= runReconcile(now).finally(() => {
+  reconciling ??= withWakeLock(() => runReconcile(now)).finally(() => {
     reconciling = null;
   });
   return reconciling;
@@ -314,6 +337,8 @@ async function runReconcile(now: Date): Promise<number> {
         alarm.nextFireAt &&
         new Date(alarm.nextFireAt).getTime() <= now.getTime()
       ) {
+        // Att avbryta det inbyggda larmet avbryter också dess snooze – vänta tills den ringt
+        if (await hasPendingNativeSnooze(alarm.osIds)) continue;
         await cancelNotifications(alarm.osIds);
         saveWakeAlarm({ ...alarm, enabled: false, osIds: [], planKey: null });
         changed++;

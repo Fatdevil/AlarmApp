@@ -16,6 +16,7 @@ jest.mock('../src/services/notifications', () => ({
   scheduleWakeSnooze: jest.fn(async () => 'snooze-1'),
   cancelNotifications: jest.fn(async () => {}),
   stillScheduled: jest.fn(async (ids: string[]) => ids),
+  hasPendingNativeSnooze: jest.fn(async () => false),
 }));
 jest.mock('../src/services/diagnostics', () => ({ logEvent: jest.fn() }));
 jest.mock('../modules/native-alarm', () => ({
@@ -37,6 +38,7 @@ import {
   restoreWakeAlarms,
   setWakeEnabled,
   skipNextWake,
+  snoozeWake,
   wakeDismissed,
 } from '../src/services/wake';
 /* eslint-enable import/first */
@@ -156,6 +158,49 @@ describe('reconcileWakeAlarms', () => {
     jest.clearAllMocks();
     await expect(reconcileWakeAlarms(sat5)).resolves.toBe(0);
     expect(notif.scheduleWakePlan).not.toHaveBeenCalled();
+  });
+
+  it('behåller snoozen på ett engångslarm som redan har ringt', async () => {
+    const [a] = await createWakeAlarms({ hour: 5, minute: 30, label: '', weekdays: [] }, undefined, sat5);
+    await snoozeWake(a.id, new Date(2026, 8, 26, 5, 31));
+    jest.clearAllMocks();
+
+    await reconcileWakeAlarms(new Date(2026, 8, 26, 5, 32));
+    expect(mockStore.get(a.id)!.enabled).toBe(true);
+    expect(mockStore.get(a.id)!.osIds).toContain('snooze-1');
+    expect(notif.cancelNotifications).not.toHaveBeenCalled();
+    expect(notif.scheduleWakePlan).not.toHaveBeenCalled();
+
+    // När snoozen har ringt stängs larmet av som vanligt
+    await reconcileWakeAlarms(new Date(2026, 8, 26, 5, 45));
+    expect(mockStore.get(a.id)!.enabled).toBe(false);
+  });
+
+  it('snooze efter en samtidig avstämning slår på engångslarmet igen', async () => {
+    const [a] = await createWakeAlarms({ hour: 5, minute: 30, label: '', weekdays: [] }, undefined, sat5);
+    const at = new Date(2026, 8, 26, 5, 31);
+    // Knappen öppnar appen: avstämningen hinner starta före snoozen
+    await Promise.all([reconcileWakeAlarms(at), snoozeWake(a.id, at)]);
+    expect(mockStore.get(a.id)!.enabled).toBe(true);
+    expect(mockStore.get(a.id)!.osIds).toEqual(['snooze-1']);
+
+    jest.clearAllMocks();
+    await reconcileWakeAlarms(new Date(2026, 8, 26, 5, 32));
+    expect(notif.cancelNotifications).not.toHaveBeenCalled();
+  });
+
+  it('avbryter inte en snooze som Android själv har lagt på ett engångslarm', async () => {
+    const [a] = await createWakeAlarms({ hour: 5, minute: 30, label: '', weekdays: [] }, undefined, sat5);
+    jest.clearAllMocks();
+    m(notif.hasPendingNativeSnooze).mockResolvedValueOnce(true);
+
+    await reconcileWakeAlarms(new Date(2026, 8, 26, 5, 32));
+    expect(notif.cancelNotifications).not.toHaveBeenCalled();
+    expect(mockStore.get(a.id)!.enabled).toBe(true);
+
+    // Snoozen har ringt → stängs av som vanligt
+    await reconcileWakeAlarms(new Date(2026, 8, 26, 5, 45));
+    expect(mockStore.get(a.id)!.enabled).toBe(false);
   });
 
   it('schemalägger om larm som saknas i OS', async () => {
