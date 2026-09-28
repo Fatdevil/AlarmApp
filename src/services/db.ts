@@ -136,6 +136,15 @@ const MIGRATIONS: (() => void)[] = [
   () => {
     addColumnIfMissing('wake_alarms', 'pendingCancelJson', 'TEXT');
   },
+  // v8: fristående kö för OS-larm som saknar en säker databasrad efter rollback
+  () => {
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS pending_alarm_cancellations (
+        osId TEXT PRIMARY KEY,
+        createdAt TEXT NOT NULL
+      );
+    `);
+  },
 ];
 
 export function initDatabase(): void {
@@ -368,6 +377,43 @@ export function deleteWakeAlarm(id: string): void {
   notifyChange();
 }
 
+// --- VÄNTANDE OS-AVBOKNINGAR ---
+
+/**
+ * Sparar OS-ID:n som inte kunde avbokas under en rollback. Kön är fristående
+ * från larmraderna så att ett borttaget eller aldrig färdigskapat larm fortfarande
+ * kan städas upp vid nästa appstart.
+ */
+export function enqueuePendingAlarmCancellations(ids: string[], now = new Date()): void {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  if (uniqueIds.length === 0) return;
+  db.withTransactionSync(() => {
+    for (const id of uniqueIds) {
+      db.runSync(
+        'INSERT OR IGNORE INTO pending_alarm_cancellations (osId, createdAt) VALUES (?, ?)',
+        [id, now.toISOString()]
+      );
+    }
+  });
+}
+
+export function getPendingAlarmCancellations(): string[] {
+  return db
+    .getAllSync<{ osId: string }>('SELECT osId FROM pending_alarm_cancellations ORDER BY createdAt, osId')
+    .map((row) => row.osId);
+}
+
+export function removePendingAlarmCancellations(ids: string[]): void {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  if (uniqueIds.length === 0) return;
+  const placeholders = uniqueIds.map(() => '?').join(', ');
+  db.runSync(`DELETE FROM pending_alarm_cancellations WHERE osId IN (${placeholders})`, uniqueIds);
+}
+
+export function clearPendingAlarmCancellations(): void {
+  db.runSync('DELETE FROM pending_alarm_cancellations');
+}
+
 // --- INSTÄLLNINGAR ---
 
 export function getSetting(key: string): string | null {
@@ -503,6 +549,7 @@ export function purgeAllLocalData(): void {
     db.runSync('DELETE FROM alarms');
     db.runSync('DELETE FROM wake_alarms');
     db.runSync('DELETE FROM region_states');
+    db.runSync('DELETE FROM pending_alarm_cancellations');
   });
   db.execSync('VACUUM');
   notifyChange();

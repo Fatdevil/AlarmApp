@@ -30,6 +30,7 @@ import {
   cancelNotifications,
   cancelNotificationsBestEffort,
   hasPendingNativeSnooze,
+  retryPendingAlarmCancellations,
   scheduleWakePlan,
   scheduleWakeSnooze,
   stillScheduled,
@@ -378,6 +379,7 @@ export function reconcileWakeAlarms(now: Date = new Date()): Promise<number> {
 
 async function runReconcile(now: Date): Promise<number> {
   let changed = 0;
+  await retryPendingAlarmCancellations();
   const nativeSkips = await consumeNativeSkips().catch(() => new Map<string, Date>());
 
   for (const stored of getWakeAlarms()) {

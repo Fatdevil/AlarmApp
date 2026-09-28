@@ -42,6 +42,7 @@ npm run check   # typecheck + lint + tester
 
 Androids schemaläggningslogik har egna JVM-tester (`modules/native-alarm/android/src/test`).
 De kräver Android-projektet: `npx expo prebuild -p android && cd android && ./gradlew :native-alarm:testDebugUnitTest`.
+GitHub Actions kör båda kontrollstegen automatiskt på varje pull request och push till `main`.
 
 ## Struktur
 

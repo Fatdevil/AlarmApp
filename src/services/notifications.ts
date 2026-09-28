@@ -12,6 +12,12 @@ import { SNOOZE_MINUTES } from '../constants';
 import { WEEKDAY_NUMBERS } from '../logic/time';
 import { formatHM, isSkipping, SchedulePlan, WakeAlarm } from '../logic/wake';
 import { LocalAlarm } from '../types';
+import {
+  clearPendingAlarmCancellations,
+  enqueuePendingAlarmCancellations,
+  getPendingAlarmCancellations,
+  removePendingAlarmCancellations,
+} from './db';
 
 /**
  * Larmkanal på Android. Kanalinställningar är oföränderliga efter att de skapats,
@@ -403,15 +409,45 @@ export async function cancelNotifications(ids: string[] | undefined): Promise<vo
   if (failed.length > 0) throw new CancelNotificationsError(failed);
 }
 
-/** För återställning efter ett annat fel: avbryt så mycket som går, kasta aldrig. */
+/**
+ * För återställning efter ett annat fel: avbryt så mycket som går och kasta aldrig.
+ * ID:n som inte kunde avbokas sparas i en fristående, beständig kö så att de inte
+ * tappas om den tillhörande larmraden raderas eller aldrig hann sparas.
+ */
 export async function cancelNotificationsBestEffort(ids: string[] | undefined): Promise<void> {
-  await cancelNotifications(ids).catch(() => {});
+  const requested = [...new Set(ids ?? [])];
+  if (requested.length === 0) return;
+  try {
+    await cancelNotifications(requested);
+  } catch (err) {
+    const failed = err instanceof CancelNotificationsError ? err.failedIds : requested;
+    enqueuePendingAlarmCancellations(failed);
+  }
+}
+
+/** Försöker tömma den beständiga rollback-kön. Lyckade ID:n tas bort, övriga ligger kvar. */
+export async function retryPendingAlarmCancellations(): Promise<number> {
+  const pending = getPendingAlarmCancellations();
+  if (pending.length === 0) return 0;
+
+  let failed: string[] = [];
+  try {
+    await cancelNotifications(pending);
+  } catch (err) {
+    failed = err instanceof CancelNotificationsError ? err.failedIds : pending;
+  }
+
+  const failedSet = new Set(failed);
+  const succeeded = pending.filter((id) => !failedSet.has(id));
+  removePendingAlarmCancellations(succeeded);
+  return succeeded.length;
 }
 
 /** Avbryter allt appen har schemalagt: notiser och systemlarm (AlarmKit/AlarmManager). */
 export async function cancelAllScheduledNotifications(): Promise<void> {
   await cancelAllNativeAlarms();
   await Notifications.cancelAllScheduledNotificationsAsync();
+  clearPendingAlarmCancellations();
 }
 
 /** Omedelbar lokal notis när en geofence löser ut på enheten. */

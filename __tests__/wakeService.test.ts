@@ -23,6 +23,7 @@ jest.mock('../src/services/notifications', () => ({
       this.failedIds = ids;
     }
   },
+  retryPendingAlarmCancellations: jest.fn(async () => 0),
   stillScheduled: jest.fn(async (ids: string[]) => ids),
   hasPendingNativeSnooze: jest.fn(async () => false),
 }));
@@ -98,6 +99,21 @@ describe('createWakeAlarms', () => {
     expect(notif.cancelNotificationsBestEffort).toHaveBeenCalledWith(['b']);
   });
 
+  it('lämnar misslyckade rollback-avbokningar till den beständiga kön', async () => {
+    m(notif.scheduleWakePlan)
+      .mockResolvedValueOnce(['first-os-id'])
+      .mockRejectedValueOnce(new Error('andra larmet kunde inte schemaläggas'));
+
+    await expect(
+      createWakeAlarms({ hour: 6, minute: 0, label: '', weekdays: everyDay }, { count: 2, intervalMinutes: 5 }, sat5)
+    ).rejects.toThrow('andra larmet kunde inte schemaläggas');
+
+    // cancelNotificationsBestEffort ansvarar för att beständigt köa ett ID som
+    // OS inte kan avboka; dess separata tester verifierar både köning och retry.
+    expect(notif.cancelNotificationsBestEffort).toHaveBeenCalledWith(['first-os-id']);
+    expect(mockStore.size).toBe(0);
+  });
+
   it('engångslarm får ett nextFireAt', async () => {
     const [a] = await createWakeAlarms({ hour: 7, minute: 30, label: '', weekdays: [] }, undefined, sat5);
     expect(new Date(a.nextFireAt!).getHours()).toBe(7);
@@ -155,6 +171,11 @@ describe('Jag är vaken', () => {
 });
 
 describe('reconcileWakeAlarms', () => {
+  it('försöker tömma den beständiga rollback-kön vid avstämning', async () => {
+    await reconcileWakeAlarms(sat5);
+    expect(notif.retryPendingAlarmCancellations).toHaveBeenCalledTimes(1);
+  });
+
   it('stänger av engångslarm som har ringt', async () => {
     const [a] = await createWakeAlarms({ hour: 5, minute: 30, label: '', weekdays: [] }, undefined, sat5);
     await reconcileWakeAlarms(new Date(2026, 8, 26, 9, 0));
@@ -406,4 +427,3 @@ describe('överhoppningar gjorda av Android', () => {
     expect(scheduledFor.filter((id) => id === oneTime.id)).toHaveLength(1); // bara när det skapades
   });
 });
-

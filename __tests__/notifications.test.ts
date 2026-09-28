@@ -20,18 +20,27 @@ jest.mock('../modules/native-alarm', () => ({
   cancelAllNativeAlarms: jest.fn(async () => {}),
   getScheduledNativeAlarmIds: jest.fn(async () => []),
 }));
+jest.mock('../src/services/db', () => ({
+  clearPendingAlarmCancellations: jest.fn(),
+  enqueuePendingAlarmCancellations: jest.fn(),
+  getPendingAlarmCancellations: jest.fn(() => []),
+  removePendingAlarmCancellations: jest.fn(),
+}));
 
 /* eslint-disable import/first */
 import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import * as Native from '../modules/native-alarm';
 import { planSchedule, SKIP_COVER_WEEKS, WakeAlarm } from '../src/logic/wake';
+import * as db from '../src/services/db';
 import {
   cancelAllScheduledNotifications,
   CancelNotificationsError,
   cancelNotifications,
+  cancelNotificationsBestEffort,
   getScheduledByAlarm,
   hasPendingNativeSnooze,
+  retryPendingAlarmCancellations,
   scheduleTimeAlarm,
   scheduleWakePlan,
 } from '../src/services/notifications';
@@ -55,7 +64,10 @@ function alarm(overrides: Partial<LocalAlarm> = {}): LocalAlarm {
   };
 }
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  (db.getPendingAlarmCancellations as jest.Mock).mockReset().mockReturnValue([]);
+});
 
 /** Ett vardagslarm där nästa tillfälle har hoppats över. */
 function skippedWake(): WakeAlarm {
@@ -111,6 +123,34 @@ describe('cancelNotifications', () => {
     expect(err).toBeInstanceOf(CancelNotificationsError);
     expect(err.failedIds).toEqual([`native:${UUID}`]);
     expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith('notif-1');
+  });
+
+  it('sparar ID:t beständigt när en rollback inte kan avboka larmet', async () => {
+    (Native.cancelNativeAlarm as jest.Mock).mockRejectedValueOnce(new Error('OS svarar inte'));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(cancelNotificationsBestEffort([`native:${UUID}`, 'notif-1'])).resolves.toBeUndefined();
+
+    expect(db.enqueuePendingAlarmCancellations).toHaveBeenCalledWith([`native:${UUID}`]);
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith('notif-1');
+  });
+
+  it('tar bara bort lyckade ID:n när rollback-kön försöks igen', async () => {
+    (db.getPendingAlarmCancellations as jest.Mock).mockReturnValue([`native:${UUID}`, 'notif-1']);
+    (Native.cancelNativeAlarm as jest.Mock).mockRejectedValueOnce(new Error('fortfarande fel'));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(retryPendingAlarmCancellations()).resolves.toBe(1);
+
+    expect(db.removePendingAlarmCancellations).toHaveBeenCalledWith(['notif-1']);
+  });
+
+  it('tömmer rollback-kön när nästa försök lyckas', async () => {
+    (db.getPendingAlarmCancellations as jest.Mock).mockReturnValue([`native:${UUID}`]);
+
+    await expect(retryPendingAlarmCancellations()).resolves.toBe(1);
+
+    expect(db.removePendingAlarmCancellations).toHaveBeenCalledWith([`native:${UUID}`]);
   });
 });
 
@@ -189,6 +229,6 @@ describe('cancelAllScheduledNotifications', () => {
     await cancelAllScheduledNotifications();
     expect(Native.cancelAllNativeAlarms).toHaveBeenCalled();
     expect(Notifications.cancelAllScheduledNotificationsAsync).toHaveBeenCalled();
+    expect(db.clearPendingAlarmCancellations).toHaveBeenCalled();
   });
 });
-
