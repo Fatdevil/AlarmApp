@@ -132,6 +132,10 @@ const MIGRATIONS: (() => void)[] = [
       );
     `);
   },
+  // v7: väckningslarmens OS-ID:n som väntar på avbokning
+  () => {
+    addColumnIfMissing('wake_alarms', 'pendingCancelJson', 'TEXT');
+  },
 ];
 
 export function initDatabase(): void {
@@ -297,6 +301,7 @@ interface WakeRow {
   seriesId: string | null;
   seriesIndex: number;
   osIdsJson: string | null;
+  pendingCancelJson: string | null;
   planKey: string | null;
   nextFireAt: string | null;
   createdAt: string;
@@ -314,6 +319,7 @@ function rowToWake(r: WakeRow): WakeAlarm {
     seriesId: r.seriesId,
     seriesIndex: r.seriesIndex,
     osIds: safeJsonParse<string[]>(r.osIdsJson, []),
+    pendingCancellationIds: safeJsonParse<string[]>(r.pendingCancelJson, []),
     planKey: r.planKey,
     nextFireAt: r.nextFireAt,
     createdAt: r.createdAt,
@@ -335,8 +341,8 @@ export function saveWakeAlarm(a: WakeAlarm): void {
   db.runSync(
     `INSERT OR REPLACE INTO wake_alarms (
       id, hour, minute, label, weekdaysJson, enabled, skipUntil, seriesId, seriesIndex,
-      osIdsJson, planKey, nextFireAt, createdAt
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      osIdsJson, pendingCancelJson, planKey, nextFireAt, createdAt
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       a.id,
       a.hour,
@@ -348,6 +354,7 @@ export function saveWakeAlarm(a: WakeAlarm): void {
       a.seriesId,
       a.seriesIndex,
       a.osIds.length ? JSON.stringify(a.osIds) : null,
+      a.pendingCancellationIds.length ? JSON.stringify(a.pendingCancellationIds) : null,
       a.planKey,
       a.nextFireAt,
       a.createdAt,

@@ -40,6 +40,9 @@ npx eas-cli build --profile development --platform android   # eller ios
 npm run check   # typecheck + lint + tester
 ```
 
+Androids schemaläggningslogik har egna JVM-tester (`modules/native-alarm/android/src/test`).
+De kräver Android-projektet: `npx expo prebuild -p android && cd android && ./gradlew :native-alarm:testDebugUnitTest`.
+
 ## Struktur
 
 | Mapp | Innehåll |

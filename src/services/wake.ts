@@ -56,6 +56,20 @@ export interface SeriesInput {
   intervalMinutes: number;
 }
 
+/** Avbokar och returnerar de ID:n som inte gick att avboka (i stället för att kasta). */
+async function cancelReturningFailed(ids: string[]): Promise<string[]> {
+  try {
+    await cancelNotifications(ids);
+    return [];
+  } catch (err) {
+    return err instanceof CancelNotificationsError ? err.failedIds : ids;
+  }
+}
+
+function unique(ids: string[]): string[] {
+  return [...new Set(ids)];
+}
+
 /** Schemalägger larmets aktuella plan och sparar. Kastar utan att röra det gamla schemat vid fel. */
 async function applyPlan(wake: WakeAlarm, now: Date = new Date()): Promise<WakeAlarm> {
   const plan = planSchedule(wake, now);
@@ -72,15 +86,16 @@ async function applyPlan(wake: WakeAlarm, now: Date = new Date()): Promise<WakeA
     await cancelNotificationsBestEffort(newIds);
     throw err;
   }
-  try {
-    await cancelNotifications(wake.osIds.filter((id) => !newIds.includes(id)));
-  } catch (err) {
-    // Den nya planen gäller, men gamla larm som inte gick att avbryta behålls så
-    // att nästa ändring eller radering försöker igen
-    if (!(err instanceof CancelNotificationsError)) throw err;
-    const retained: WakeAlarm = { ...updated, osIds: [...newIds, ...err.failedIds] };
-    saveWakeAlarm(retained);
-    return retained;
+  const failed = await cancelReturningFailed(wake.osIds.filter((id) => !newIds.includes(id)));
+  if (failed.length > 0) {
+    // Den nya planen gäller. Gamla larm som inte gick att avboka hålls isär från
+    // det aktuella schemat, och avstämningen försöker igen vid varje start.
+    const withPending: WakeAlarm = {
+      ...updated,
+      pendingCancellationIds: unique([...updated.pendingCancellationIds, ...failed]),
+    };
+    saveWakeAlarm(withPending);
+    return withPending;
   }
   return updated;
 }
@@ -102,6 +117,7 @@ function baseAlarm(
     seriesId: series?.id ?? null,
     seriesIndex: series?.index ?? 0,
     osIds: [],
+    pendingCancellationIds: [],
     planKey: null,
     nextFireAt:
       input.weekdays.length === 0
@@ -269,17 +285,52 @@ export function snoozeWake(id: string, now: Date = new Date()): Promise<void> {
   });
 }
 
-/** Raderar larm och returnerar ögonblicksbilder för "Ångra". */
-export async function removeWakeAlarms(ids: string[]): Promise<WakeAlarm[]> {
-  const removed: WakeAlarm[] = [];
-  for (const id of ids) {
-    const alarm = getWakeAlarm(id);
-    if (!alarm) continue;
-    await cancelNotifications(alarm.osIds);
-    deleteWakeAlarm(id);
-    removed.push(alarm);
+/**
+ * Raderar larm (t.ex. en hel serie) och returnerar ögonblicksbilder för "Ångra".
+ * Atomiskt: ingen rad raderas förrän alla larmens OS-avbokningar har lyckats.
+ * Misslyckas någon avbokning återställs de larm som hann avbokas i OS, ID:n som
+ * inte gick att avboka sparas för ett nytt försök, och felet kastas.
+ */
+export function removeWakeAlarms(ids: string[], now: Date = new Date()): Promise<WakeAlarm[]> {
+  // Under samma lås som avstämningen, så att den inte sparar tillbaka en rad som just raderats
+  return withWakeLock(() => removeWakeAlarmsLocked(ids, now));
+}
+
+async function removeWakeAlarmsLocked(ids: string[], now: Date): Promise<WakeAlarm[]> {
+  const alarms = ids.map((id) => getWakeAlarm(id)).filter((a): a is WakeAlarm => a !== null);
+
+  const failures = new Map<string, string[]>();
+  for (const alarm of alarms) {
+    const failed = await cancelReturningFailed([...alarm.osIds, ...alarm.pendingCancellationIds]);
+    if (failed.length > 0) failures.set(alarm.id, failed);
   }
-  return removed;
+
+  if (failures.size > 0) {
+    for (const alarm of alarms) {
+      const failed = failures.get(alarm.id) ?? [];
+      const pendingLeft = alarm.pendingCancellationIds.filter((id) => failed.includes(id));
+      try {
+        if (alarm.osIds.every((id) => failed.includes(id))) {
+          // Inget av det aktuella schemat avbokades – larmet är oförändrat i OS
+          saveWakeAlarm({ ...alarm, pendingCancellationIds: pendingLeft });
+        } else {
+          // Schemalägg om det som hann avbokas; kvarvarande gamla ID:n väntar på avbokning
+          const stale = alarm.osIds.filter((id) => failed.includes(id));
+          await applyPlan(
+            { ...alarm, osIds: [], planKey: null, pendingCancellationIds: unique([...pendingLeft, ...stale]) },
+            now
+          );
+        }
+      } catch (err) {
+        console.warn(`[Wake] Kunde inte återställa ${alarm.id}:`, err);
+      }
+    }
+    throw new CancelNotificationsError([...failures.values()].flat());
+  }
+
+  for (const alarm of alarms) deleteWakeAlarm(alarm.id);
+  // Allt är avbokat – ögonblicksbilderna för "Ångra" har inget kvar att avboka
+  return alarms.map((a) => ({ ...a, pendingCancellationIds: [] }));
 }
 
 export async function restoreWakeAlarms(snapshots: WakeAlarm[], now: Date = new Date()): Promise<void> {
@@ -331,7 +382,16 @@ async function runReconcile(now: Date): Promise<number> {
 
   for (const stored of getWakeAlarms()) {
     try {
-      const alarm = withNativeSkips(stored, nativeSkips, now);
+      let alarm = withNativeSkips(stored, nativeSkips, now);
+
+      // Gamla OS-ID:n som inte gick att avboka tidigare – försök igen
+      if (alarm.pendingCancellationIds.length > 0) {
+        const stillPending = await cancelReturningFailed(alarm.pendingCancellationIds);
+        if (stillPending.length !== alarm.pendingCancellationIds.length) {
+          alarm = { ...alarm, pendingCancellationIds: stillPending };
+          changed++;
+        }
+      }
       if (alarm !== stored) saveWakeAlarm(alarm);
 
       if (!alarm.enabled) {

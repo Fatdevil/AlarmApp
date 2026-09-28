@@ -70,6 +70,7 @@ function skippedWake(): WakeAlarm {
     seriesId: null,
     seriesIndex: 0,
     osIds: [],
+    pendingCancellationIds: [],
     planKey: null,
     nextFireAt: null,
     createdAt: new Date().toISOString(),

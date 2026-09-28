@@ -26,6 +26,7 @@ function wake(overrides: Partial<WakeAlarm> = {}): WakeAlarm {
     seriesId: null,
     seriesIndex: 0,
     osIds: [],
+    pendingCancellationIds: [],
     planKey: null,
     nextFireAt: null,
     createdAt: fri.toISOString(),

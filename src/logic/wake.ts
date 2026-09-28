@@ -18,8 +18,13 @@ export interface WakeAlarm {
   /** Larm som skapats som en väckningsserie delar seriesId. */
   seriesId: string | null;
   seriesIndex: number;
-  /** ID:n för det som är schemalagt i OS ("native:<uuid>" eller notis-ID). */
+  /** ID:n för larmets aktuella schema i OS ("native:<uuid>" eller notis-ID). */
   osIds: string[];
+  /**
+   * Gamla OS-ID:n som inte gick att avboka (t.ex. vid ändrad tid). Hör inte till
+   * det aktuella schemat; avstämningen försöker avboka dem vid varje start.
+   */
+  pendingCancellationIds: string[];
   /** Signatur för den plan som senast schemalades – ändras den behöver OS uppdateras. */
   planKey: string | null;
   /** Engångslarm: när det är schemalagt att ringa. */

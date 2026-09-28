@@ -16,7 +16,7 @@ jest.mock('../src/services/notifications', () => ({
   scheduleWakeSnooze: jest.fn(async () => 'snooze-1'),
   cancelNotifications: jest.fn(async () => {}),
   cancelNotificationsBestEffort: jest.fn(async () => {}),
-  CancelNotificationsError: class extends Error {
+  CancelNotificationsError: class MockCancelError extends Error {
     failedIds: string[];
     constructor(ids: string[]) {
       super('cancel');
@@ -37,6 +37,7 @@ jest.mock('expo-crypto', () => {
 
 /* eslint-disable import/first */
 import * as Native from '../modules/native-alarm';
+import * as db from '../src/services/db';
 import * as notif from '../src/services/notifications';
 import {
   createWakeAlarms,
@@ -47,9 +48,14 @@ import {
   setWakeEnabled,
   skipNextWake,
   snoozeWake,
+  updateWakeAlarm,
   wakeDismissed,
 } from '../src/services/wake';
 /* eslint-enable import/first */
+
+const MockCancelError = jest.requireMock('../src/services/notifications').CancelNotificationsError as new (
+  ids: string[]
+) => Error & { failedIds: string[] };
 
 const m = <T extends (...args: any[]) => any>(fn: T) => fn as unknown as jest.MockedFunction<T>;
 
@@ -60,6 +66,10 @@ const everyDay = [1, 2, 3, 4, 5, 6, 7];
 beforeEach(() => {
   mockStore.clear();
   jest.clearAllMocks();
+  // clearAllMocks tömmer inte köade *Once-svar – återställ så att inget läcker mellan tester
+  m(notif.cancelNotifications).mockReset().mockImplementation(async () => {});
+  m(notif.stillScheduled).mockReset().mockImplementation(async (ids: string[]) => ids);
+  m(notif.hasPendingNativeSnooze).mockReset().mockImplementation(async () => false);
 });
 
 describe('createWakeAlarms', () => {
@@ -211,27 +221,119 @@ describe('reconcileWakeAlarms', () => {
     expect(mockStore.get(a.id)!.enabled).toBe(false);
   });
 
-  it('behåller gamla ID:n som inte gick att avbryta när planen byts', async () => {
+  it('avstängning: gamla ID:n som inte gick att avboka väntar separat och avbokas vid nästa avstämning', async () => {
     const [a] = await createWakeAlarms({ hour: 6, minute: 0, label: '', weekdays: everyDay }, undefined, sat5);
     const oldIds = mockStore.get(a.id)!.osIds;
-    const { CancelNotificationsError } = jest.requireMock('../src/services/notifications');
-    m(notif.cancelNotifications).mockRejectedValueOnce(new CancelNotificationsError(oldIds));
+    m(notif.cancelNotifications).mockRejectedValueOnce(new MockCancelError(oldIds));
 
     await setWakeEnabled(a.id, false, sat5);
     expect(mockStore.get(a.id)!.enabled).toBe(false);
-    expect(mockStore.get(a.id)!.osIds).toEqual(oldIds);
+    expect(mockStore.get(a.id)!.osIds).toEqual([]);
+    expect(mockStore.get(a.id)!.pendingCancellationIds).toEqual(oldIds);
 
-    // Nästa avstämning försöker igen
     await reconcileWakeAlarms(sat5);
     expect(notif.cancelNotifications).toHaveBeenLastCalledWith(oldIds);
-    expect(mockStore.get(a.id)!.osIds).toEqual([]);
+    expect(mockStore.get(a.id)!.pendingCancellationIds).toEqual([]);
   });
 
-  it('raderar inte väckningen om den inte gick att avbryta i OS', async () => {
-    const [a] = await createWakeAlarms({ hour: 6, minute: 0, label: '', weekdays: everyDay }, undefined, sat5);
-    m(notif.cancelNotifications).mockRejectedValueOnce(new Error('OS svarar inte'));
-    await expect(removeWakeAlarms([a.id])).rejects.toThrow('OS svarar inte');
-    expect(mockStore.has(a.id)).toBe(true);
+  describe('aktiv tidsändring där avbokningen av det gamla schemat misslyckas', () => {
+    it('det nya schemat gäller, det gamla väntar separat och räknas inte som aktuellt', async () => {
+      const [a] = await createWakeAlarms({ hour: 6, minute: 0, label: '', weekdays: everyDay }, undefined, sat5);
+      const oldIds = mockStore.get(a.id)!.osIds;
+      m(notif.cancelNotifications).mockRejectedValueOnce(new MockCancelError(oldIds));
+
+      await updateWakeAlarm(a.id, { hour: 7, minute: 15, label: '', weekdays: everyDay }, sat5);
+      const updated = mockStore.get(a.id)!;
+      expect(updated.hour).toBe(7);
+      expect(updated.enabled).toBe(true);
+      expect(updated.osIds).toHaveLength(1);
+      expect(updated.osIds).not.toEqual(oldIds);
+      expect(updated.pendingCancellationIds).toEqual(oldIds);
+
+      // Det gamla schemat finns kvar i OS, men det nya saknas: avstämningen ska
+      // schemalägga om det nya – inte luras av det gamla ID:t
+      jest.clearAllMocks();
+      m(notif.stillScheduled).mockImplementationOnce(async (ids: string[]) =>
+        ids.filter((id) => oldIds.includes(id))
+      );
+      m(notif.cancelNotifications).mockRejectedValueOnce(new MockCancelError(oldIds)); // fortfarande fel
+      await reconcileWakeAlarms(sat5);
+      expect(notif.scheduleWakePlan).toHaveBeenCalledTimes(1);
+      expect(mockStore.get(a.id)!.pendingCancellationIds).toEqual(oldIds);
+    });
+
+    it('nästa start avbokar det gamla schemat och tömmer listan', async () => {
+      const [a] = await createWakeAlarms({ hour: 6, minute: 0, label: '', weekdays: everyDay }, undefined, sat5);
+      const oldIds = mockStore.get(a.id)!.osIds;
+      m(notif.cancelNotifications).mockRejectedValueOnce(new MockCancelError(oldIds));
+      await updateWakeAlarm(a.id, { hour: 7, minute: 15, label: '', weekdays: everyDay }, sat5);
+      const newIds = mockStore.get(a.id)!.osIds;
+
+      jest.clearAllMocks();
+      await reconcileWakeAlarms(sat5);
+      expect(notif.cancelNotifications).toHaveBeenCalledWith(oldIds);
+      expect(notif.cancelNotifications).not.toHaveBeenCalledWith(newIds);
+      expect(mockStore.get(a.id)!.pendingCancellationIds).toEqual([]);
+      expect(mockStore.get(a.id)!.osIds).toEqual(newIds);
+    });
+  });
+
+  describe('serieradering där avbokning nummer två misslyckas', () => {
+    it('ingen rad raderas, avbokade larm schemaläggs om och felet kastas', async () => {
+      const series = await createWakeAlarms(
+        { hour: 6, minute: 0, label: '', weekdays: everyDay },
+        { count: 3, intervalMinutes: 10 },
+        sat5
+      );
+      const before = series.map((a) => mockStore.get(a.id)!);
+      m(notif.cancelNotifications)
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new MockCancelError(before[1].osIds))
+        .mockResolvedValueOnce(undefined);
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await expect(removeWakeAlarms(series.map((a) => a.id), sat5)).rejects.toBeInstanceOf(MockCancelError);
+
+      expect(mockStore.size).toBe(3);
+      expect(db.deleteWakeAlarm).not.toHaveBeenCalled();
+      // Larm 1 och 3 avbokades – de schemaläggs om så att serien fortfarande ringer
+      expect(mockStore.get(series[0].id)!.osIds).toHaveLength(1);
+      expect(mockStore.get(series[0].id)!.osIds).not.toEqual(before[0].osIds);
+      expect(mockStore.get(series[2].id)!.osIds).not.toEqual(before[2].osIds);
+      // Larm 2 avbokades aldrig – det är oförändrat
+      expect(mockStore.get(series[1].id)!.osIds).toEqual(before[1].osIds);
+      expect(mockStore.get(series[1].id)!.pendingCancellationIds).toEqual([]);
+    });
+
+    it('när avbokningen sedan lyckas raderas hela serien', async () => {
+      const series = await createWakeAlarms(
+        { hour: 6, minute: 0, label: '', weekdays: everyDay },
+        { count: 3, intervalMinutes: 10 },
+        sat5
+      );
+      m(notif.cancelNotifications).mockResolvedValueOnce(undefined).mockRejectedValueOnce(new MockCancelError(['x']));
+      jest.spyOn(console, 'warn').mockImplementation(() => {});
+      await expect(removeWakeAlarms(series.map((a) => a.id), sat5)).rejects.toBeDefined();
+
+      const removed = await removeWakeAlarms(series.map((a) => a.id), sat5);
+      expect(removed).toHaveLength(3);
+      expect(mockStore.size).toBe(0);
+    });
+
+    it('delvis misslyckad avbokning: det som hann avbokas schemaläggs om, resten väntar', async () => {
+      const [a] = await createWakeAlarms({ hour: 6, minute: 0, label: '', weekdays: everyDay }, undefined, sat5);
+      await skipNextWake(a.id, sat5); // flera OS-ID:n (serie + ersättningslarm)
+      const ids = mockStore.get(a.id)!.osIds;
+      expect(ids.length).toBeGreaterThan(1);
+      m(notif.cancelNotifications).mockRejectedValueOnce(new MockCancelError([ids[0]]));
+
+      await expect(removeWakeAlarms([a.id], sat5)).rejects.toBeInstanceOf(MockCancelError);
+      expect(db.deleteWakeAlarm).not.toHaveBeenCalled();
+      const kept = mockStore.get(a.id)!;
+      expect(kept.pendingCancellationIds).toEqual([ids[0]]);
+      expect(kept.osIds.some((id) => ids.includes(id))).toBe(false);
+      expect(kept.osIds.length).toBe(ids.length);
+    });
   });
 
   it('schemalägger om larm som saknas i OS', async () => {
