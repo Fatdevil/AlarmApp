@@ -3,11 +3,13 @@
  * Varje operation är "allt eller inget": misslyckas OS-delen rullas databasen tillbaka.
  */
 import { LocalAlarm } from '../types';
+import { locationFromPlace } from '../logic/places';
 import { nextOccurrence } from '../logic/time';
 import {
   deleteAlarm as dbDeleteAlarm,
   getAlarm,
   getAlarmsByStatus,
+  getPlace,
   saveAlarm,
   setNotificationIds,
   updateAlarmStatus,
@@ -106,7 +108,9 @@ export async function restoreAlarm(snapshot: LocalAlarm): Promise<void> {
     return;
   }
 
-  saveAlarm(base);
+  // Platsen kan ha flyttats sedan ögonblicksbilden togs – använd den sparade platsen
+  const place = snapshot.status === 'ACTIVE_GEOFENCE' && snapshot.location ? getPlace(snapshot.location.id) : null;
+  saveAlarm(place ? { ...base, location: locationFromPlace(place) } : base);
   if (snapshot.status === 'ACTIVE_GEOFENCE') {
     try {
       await syncGeofencesWithOs();

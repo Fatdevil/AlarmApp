@@ -8,6 +8,7 @@ import {
   LifecycleState,
   LocalAlarm,
   RepeatRule,
+  SavedPlace,
   TriggerType,
 } from '../types';
 import { ObservedRegionState, RegionState } from '../logic/regionState';
@@ -155,6 +156,19 @@ const MIGRATIONS: (() => void)[] = [
         SELECT value, datetime('now') FROM wake_alarms, json_each(wake_alarms.pendingCancelJson)
         WHERE wake_alarms.pendingCancelJson IS NOT NULL;
       DROP TABLE IF EXISTS wake_alarms;
+    `);
+  },
+  // v10: sparade platser (Hemma, Jobbet …). Platslarm behåller en egen kopia av platsen.
+  () => {
+    db.execSync(`
+      CREATE TABLE IF NOT EXISTS places (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        latitude REAL NOT NULL,
+        longitude REAL NOT NULL,
+        radius INTEGER NOT NULL,
+        createdAt TEXT NOT NULL
+      );
     `);
   },
 ];
@@ -306,6 +320,76 @@ export function toggleChecklistItem(alarmId: string, itemId: string): void {
 
 export function deleteAlarm(id: string): void {
   db.runSync('DELETE FROM alarms WHERE id = ?', [id]);
+  notifyChange();
+}
+
+// --- SPARADE PLATSER ---
+
+export function getPlaces(): SavedPlace[] {
+  return db.getAllSync<SavedPlace>(
+    'SELECT id, name, latitude, longitude, radius, createdAt FROM places ORDER BY name COLLATE NOCASE'
+  );
+}
+
+export function getPlace(id: string): SavedPlace | null {
+  return db.getFirstSync<SavedPlace>(
+    'SELECT id, name, latitude, longitude, radius, createdAt FROM places WHERE id = ?',
+    [id]
+  );
+}
+
+function upsertPlaceRow(place: SavedPlace): void {
+  db.runSync(
+    `INSERT OR REPLACE INTO places (id, name, latitude, longitude, radius, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [place.id, place.name, place.latitude, place.longitude, place.radius, place.createdAt]
+  );
+}
+
+export function savePlace(place: SavedPlace): void {
+  upsertPlaceRow(place);
+  notifyChange();
+}
+
+export function deletePlace(id: string): void {
+  db.runSync('DELETE FROM places WHERE id = ?', [id]);
+  notifyChange();
+}
+
+/**
+ * Sparar platsen och uppdaterar kopian i alla aktiva platslarm som använder den, i en
+ * transaktion. Returnerar de larm som ändrades (före ändringen), för återställning.
+ */
+export function savePlaceAndActiveAlarms(place: SavedPlace): LocalAlarm[] {
+  const affected = findActiveAlarmsByLocationId(place.id);
+  const location: GeofenceLocation = {
+    id: place.id,
+    name: place.name,
+    latitude: place.latitude,
+    longitude: place.longitude,
+    radius: place.radius,
+  };
+  db.withTransactionSync(() => {
+    upsertPlaceRow(place);
+    for (const alarm of affected) {
+      db.runSync('UPDATE alarms SET locationJson = ? WHERE id = ?', [JSON.stringify(location), alarm.id]);
+    }
+  });
+  notifyChange();
+  return affected;
+}
+
+/** Återställer platsen och larmens platskopior efter ett misslyckat försök att ändra dem. */
+export function restorePlaceAndAlarms(place: SavedPlace, alarms: LocalAlarm[]): void {
+  db.withTransactionSync(() => {
+    upsertPlaceRow(place);
+    for (const alarm of alarms) {
+      db.runSync('UPDATE alarms SET locationJson = ? WHERE id = ?', [
+        alarm.location ? JSON.stringify(alarm.location) : null,
+        alarm.id,
+      ]);
+    }
+  });
   notifyChange();
 }
 
@@ -481,6 +565,7 @@ export function purgeAllLocalData(): void {
     db.runSync('DELETE FROM alarms');
     db.runSync('DELETE FROM region_states');
     db.runSync('DELETE FROM pending_alarm_cancellations');
+    db.runSync('DELETE FROM places');
   });
   db.execSync('VACUUM');
   notifyChange();

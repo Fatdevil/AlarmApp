@@ -5,6 +5,7 @@ jest.mock('../src/services/db', () => ({
   deleteAlarm: jest.fn(),
   getAlarm: jest.fn(),
   getAlarmsByStatus: jest.fn(() => []),
+  getPlace: jest.fn(() => null),
   setNotificationIds: jest.fn(),
   updateAlarmStatus: jest.fn(),
 }));
@@ -134,6 +135,34 @@ describe('completeAlarm + restoreAlarm (ångra)', () => {
     await restoreAlarm(alarm({ dateTime: past }));
     expect(notif.scheduleTimeAlarm).not.toHaveBeenCalled();
     expect(db.saveAlarm).toHaveBeenCalledWith(expect.objectContaining({ status: 'FIRED_LOCALLY' }));
+  });
+});
+
+describe('restoreAlarm för platslarm', () => {
+  const jobbet = { id: 'place_1', name: 'Jobbet', latitude: 59.3, longitude: 18.0, radius: 150 };
+  const geoAlarm = alarm({
+    triggerType: 'EXIT_LOCATION',
+    dateTime: null,
+    location: jobbet,
+    status: 'ACTIVE_GEOFENCE',
+  });
+
+  it('använder den sparade platsen om den flyttats sedan raderingen', async () => {
+    const moved = { ...jobbet, latitude: 59.4, radius: 300, createdAt: 't' };
+    m(db.getPlace).mockReturnValueOnce(moved);
+    await restoreAlarm(geoAlarm);
+    expect(db.getPlace).toHaveBeenCalledWith('place_1');
+    expect(db.saveAlarm).toHaveBeenCalledWith(
+      expect.objectContaining({
+        location: { id: 'place_1', name: 'Jobbet', latitude: 59.4, longitude: 18.0, radius: 300 },
+      })
+    );
+    expect(geo.syncGeofencesWithOs).toHaveBeenCalled();
+  });
+
+  it('behåller sin kopia om platsen har raderats', async () => {
+    await restoreAlarm(geoAlarm);
+    expect(db.saveAlarm).toHaveBeenCalledWith(expect.objectContaining({ location: jobbet }));
   });
 });
 

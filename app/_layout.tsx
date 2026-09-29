@@ -87,6 +87,8 @@ export default function RootLayout() {
             <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
             <Stack.Screen name="new" options={{ title: 'Nytt larm', presentation: 'modal' }} />
             <Stack.Screen name="settings" options={{ title: 'Inställningar' }} />
+            <Stack.Screen name="places" options={{ title: 'Mina platser' }} />
+            <Stack.Screen name="place-edit" options={{ title: 'Plats', presentation: 'modal' }} />
             <Stack.Screen name="diagnostics" options={{ title: 'Diagnostik' }} />
           </Stack>
         </SnackbarProvider>

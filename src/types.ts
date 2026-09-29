@@ -25,6 +25,11 @@ export interface GeofenceLocation {
   radius: number; // Måste vara >= MIN_GEOFENCE_RADIUS_METERS
 }
 
+/** En plats som användaren sparat (Hemma, Jobbet …). Finns bara på telefonen. */
+export interface SavedPlace extends GeofenceLocation {
+  createdAt: string;
+}
+
 export interface ChecklistItem {
   id: string;
   text: string;

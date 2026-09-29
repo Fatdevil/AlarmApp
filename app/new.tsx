@@ -1,10 +1,8 @@
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
-import * as Location from 'expo-location';
 import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Platform,
@@ -15,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { PickedPlace, PlacePicker } from '../src/components/PlacePicker';
 import { Button, Chip, Icon, SectionLabel } from '../src/components/ui';
 import {
   DEFAULT_GEOFENCE_RADIUS_METERS,
@@ -23,6 +22,7 @@ import {
 } from '../src/constants';
 import { suggestedTimeForDay } from '../src/logic/agenda';
 import { newId } from '../src/logic/ids';
+import { locationFromPlace, MAX_PLACE_NAME_LENGTH, validatePlace } from '../src/logic/places';
 import {
   formatClock,
   formatCountdown,
@@ -35,25 +35,11 @@ import {
   TimeSelection,
 } from '../src/logic/time';
 import { createAlarm } from '../src/services/alarms';
-import { ensurePermissions, showSettingsAlert } from '../src/services/permissionFlow';
+import { createPlace } from '../src/services/places';
+import { usePlaces } from '../src/state/usePlaces';
+import { ensurePermissions } from '../src/services/permissionFlow';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../src/theme';
 import { ChecklistItem, GeofenceLocation, LocalAlarm, RepeatRule, TriggerType } from '../src/types';
-
-interface PickedPlace {
-  name: string;
-  latitude: number;
-  longitude: number;
-  isCurrentPosition: boolean;
-}
-
-function formatAddress(a: Location.LocationGeocodedAddress | undefined, fallback: string): string {
-  if (!a) return fallback;
-  const street = [a.street, a.streetNumber].filter(Boolean).join(' ');
-  return [a.name && a.name !== street ? a.name : null, street || null, a.city]
-    .filter(Boolean)
-    .slice(0, 2)
-    .join(', ') || fallback;
-}
 
 export default function NewAlarmScreen() {
   const styles = useStyles();
@@ -76,11 +62,14 @@ export default function NewAlarmScreen() {
   const [showIosPicker, setShowIosPicker] = useState(false);
   const [now, setNow] = useState(() => new Date());
 
-  // Plats
-  const [query, setQuery] = useState('');
+  // Plats: en sparad plats eller en ny (som kan sparas)
+  const places = usePlaces();
+  const [savedPlaceId, setSavedPlaceId] = useState<string | null>(null);
+  const savedPlace = places.find((p) => p.id === savedPlaceId) ?? null;
   const [place, setPlace] = useState<PickedPlace | null>(null);
-  const [isLocating, setIsLocating] = useState(false);
   const [radius, setRadius] = useState<number>(DEFAULT_GEOFENCE_RADIUS_METERS);
+  const [saveAsPlace, setSaveAsPlace] = useState(false);
+  const [placeName, setPlaceName] = useState('');
 
   // Checklista
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
@@ -125,51 +114,16 @@ export default function NewAlarmScreen() {
     }
   };
 
-  const pickCurrentPosition = async () => {
-    setIsLocating(true);
-    try {
-      const fg = await Location.requestForegroundPermissionsAsync();
-      if (!fg.granted) {
-        showSettingsAlert('Platsåtkomst', 'Tillåt platsåtkomst för att använda din position.');
-        return;
-      }
-      const pos = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const [address] = await Location.reverseGeocodeAsync(pos.coords).catch(() => []);
-      setPlace({
-        name: formatAddress(address, 'Min position'),
-        latitude: pos.coords.latitude,
-        longitude: pos.coords.longitude,
-        isCurrentPosition: true,
-      });
-    } catch (err) {
-      Alert.alert('Kunde inte hämta position', err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsLocating(false);
-    }
+  const choosePickedPlace = (picked: PickedPlace) => {
+    setPlace(picked);
+    setSavedPlaceId(null);
+    setPlaceName(picked.isCurrentPosition ? '' : picked.name.split(',')[0]);
   };
 
-  const searchAddress = async () => {
-    const q = query.trim();
-    if (!q) return;
-    setIsLocating(true);
-    try {
-      const [hit] = await Location.geocodeAsync(q);
-      if (!hit) {
-        Alert.alert('Hittade ingen plats', `Inget resultat för "${q}". Prova med gata och ort.`);
-        return;
-      }
-      const [address] = await Location.reverseGeocodeAsync(hit).catch(() => []);
-      setPlace({
-        name: formatAddress(address, q),
-        latitude: hit.latitude,
-        longitude: hit.longitude,
-        isCurrentPosition: false,
-      });
-    } catch (err) {
-      Alert.alert('Sökningen misslyckades', err instanceof Error ? err.message : String(err));
-    } finally {
-      setIsLocating(false);
-    }
+  const chooseSavedPlace = (id: string) => {
+    setSavedPlaceId(id);
+    setPlace(null);
+    setSaveAsPlace(false);
   };
 
   const addChecklistItem = () => {
@@ -186,9 +140,20 @@ export default function NewAlarmScreen() {
       Alert.alert('Vad ska du påminnas om?', 'Skriv en kort text för larmet.');
       return;
     }
-    if (triggerType !== 'TIME' && !place) {
-      Alert.alert('Välj en plats', 'Sök efter en adress eller använd din nuvarande position.');
+    if (triggerType !== 'TIME' && !place && !savedPlace) {
+      Alert.alert('Välj en plats', 'Välj en sparad plats, sök efter en adress eller använd din position.');
       return;
+    }
+    const newPlaceInput =
+      place && saveAsPlace
+        ? { name: placeName, latitude: place.latitude, longitude: place.longitude, radius }
+        : null;
+    if (triggerType !== 'TIME' && newPlaceInput) {
+      const error = validatePlace(newPlaceInput, places);
+      if (error) {
+        Alert.alert('Platsen kan inte sparas', error);
+        return;
+      }
     }
 
     setIsSaving(true);
@@ -207,6 +172,11 @@ export default function NewAlarmScreen() {
         }
         const date = repeat === 'NONE' ? chosen : repeatingStart(chosen, repeat, saveNow);
         dateTime = date.toISOString();
+      } else if (savedPlace) {
+        location = locationFromPlace(savedPlace);
+      } else if (newPlaceInput) {
+        // Sparas som plats först, så att larmet delar zon med framtida larm på platsen
+        location = locationFromPlace(createPlace(newPlaceInput));
       } else {
         location = {
           id: newId('loc'),
@@ -398,53 +368,79 @@ export default function NewAlarmScreen() {
           </>
         ) : (
           <>
-            <View style={styles.section}>
-              <SectionLabel>Plats</SectionLabel>
-              <View style={styles.row}>
-                <TextInput
-                  style={[styles.input, { flex: 1 }]}
-                  placeholder="Sök adress, t.ex. Drottninggatan 1, Stockholm"
-                  placeholderTextColor={colors.textMuted}
-                  value={query}
-                  onChangeText={setQuery}
-                  onSubmitEditing={searchAddress}
-                  returnKeyType="search"
-                  accessibilityLabel="Sök adress"
-                />
-                <Button compact variant="secondary" title="Sök" onPress={searchAddress} disabled={isLocating} />
-              </View>
-              <Button
-                variant="ghost"
-                icon="locate"
-                title="Använd min nuvarande position"
-                onPress={pickCurrentPosition}
-                disabled={isLocating}
-                style={{ alignSelf: 'flex-start', paddingHorizontal: 0 }}
-              />
-              {isLocating && <ActivityIndicator color={colors.accentText} />}
-              {place && (
-                <View style={styles.placeBox}>
-                  <Icon name="location" size={20} color={colors.accentText} />
-                  <Text style={styles.placeName}>{place.name}</Text>
+            {places.length > 0 && (
+              <View style={styles.section}>
+                <SectionLabel>Mina platser</SectionLabel>
+                <View style={styles.wrap} accessibilityRole="radiogroup">
+                  {places.map((p) => (
+                    <Chip
+                      key={p.id}
+                      label={p.name}
+                      icon="location-outline"
+                      selected={savedPlaceId === p.id}
+                      onPress={() => chooseSavedPlace(p.id)}
+                    />
+                  ))}
                 </View>
-              )}
+              </View>
+            )}
+
+            <View style={styles.section}>
+              <SectionLabel>{places.length > 0 ? 'Annan plats' : 'Plats'}</SectionLabel>
+              <PlacePicker value={place} onChange={choosePickedPlace} />
               {place?.isCurrentPosition && triggerType === 'ENTER_LOCATION' && (
                 <Text style={[styles.hint, { color: colors.warning }]}>
                   Du är redan på platsen. Larmet ringer först när du har lämnat den och kommer tillbaka.
                 </Text>
               )}
+              {place && (
+                <>
+                  <Pressable
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: saveAsPlace }}
+                    onPress={() => setSaveAsPlace((v) => !v)}
+                    style={styles.checkRow}
+                  >
+                    <Icon
+                      name={saveAsPlace ? 'checkbox' : 'square-outline'}
+                      size={24}
+                      color={saveAsPlace ? colors.accentText : colors.textMuted}
+                    />
+                    <Text style={styles.checkText}>Spara som plats</Text>
+                  </Pressable>
+                  {saveAsPlace && (
+                    <TextInput
+                      style={styles.input}
+                      placeholder="Namn, t.ex. Hemma eller Gymmet"
+                      placeholderTextColor={colors.textMuted}
+                      value={placeName}
+                      onChangeText={setPlaceName}
+                      maxLength={MAX_PLACE_NAME_LENGTH}
+                      accessibilityLabel="Namn på platsen"
+                    />
+                  )}
+                </>
+              )}
             </View>
 
             <View style={styles.section}>
               <SectionLabel>Radie</SectionLabel>
-              <View style={styles.wrap} accessibilityRole="radiogroup">
-                {GEOFENCE_RADIUS_OPTIONS.map((r) => (
-                  <Chip key={r} label={`${r} m`} selected={radius === r} onPress={() => setRadius(r)} />
-                ))}
-              </View>
-              <Text style={styles.hint}>
-                Större radie ger säkrare utlösning. Under 100 m blir det opålitligt.
-              </Text>
+              {savedPlace ? (
+                <Text style={styles.hint}>
+                  {savedPlace.radius} m – ändras under Inställningar → Mina platser.
+                </Text>
+              ) : (
+                <>
+                  <View style={styles.wrap} accessibilityRole="radiogroup">
+                    {GEOFENCE_RADIUS_OPTIONS.map((r) => (
+                      <Chip key={r} label={`${r} m`} selected={radius === r} onPress={() => setRadius(r)} />
+                    ))}
+                  </View>
+                  <Text style={styles.hint}>
+                    Större radie ger säkrare utlösning. Under 100 m blir det opålitligt.
+                  </Text>
+                </>
+              )}
             </View>
           </>
         )}
@@ -507,17 +503,6 @@ const useStyles = makeStyles(({ colors }) => ({
   previewClock: { fontSize: 44, fontWeight: '800', color: colors.textPrimary, fontVariant: ['tabular-nums'] },
   previewText: { ...typography.callout, color: colors.textSecondary },
   hint: { ...typography.footnote, color: colors.textMuted },
-  placeBox: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.sm,
-    padding: spacing.md,
-    borderRadius: radii.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  placeName: { ...typography.callout, color: colors.textPrimary, flex: 1 },
   footer: {
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
