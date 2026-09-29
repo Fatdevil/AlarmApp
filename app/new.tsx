@@ -35,7 +35,7 @@ import {
   TimeSelection,
 } from '../src/logic/time';
 import { createAlarm } from '../src/services/alarms';
-import { createPlace } from '../src/services/places';
+import { createPlace, removePlace } from '../src/services/places';
 import { usePlaces } from '../src/state/usePlaces';
 import { ensurePermissions } from '../src/services/permissionFlow';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../src/theme';
@@ -157,6 +157,8 @@ export default function NewAlarmScreen() {
     }
 
     setIsSaving(true);
+    // En plats som sparas här tas bort igen om larmet inte kan skapas
+    let createdPlaceId: string | null = null;
     try {
       if (!(await ensurePermissions(triggerType))) return;
 
@@ -176,7 +178,9 @@ export default function NewAlarmScreen() {
         location = locationFromPlace(savedPlace);
       } else if (newPlaceInput) {
         // Sparas som plats först, så att larmet delar zon med framtida larm på platsen
-        location = locationFromPlace(createPlace(newPlaceInput));
+        const created = createPlace(newPlaceInput);
+        createdPlaceId = created.id;
+        location = locationFromPlace(created);
       } else {
         location = {
           id: newId('loc'),
@@ -205,6 +209,13 @@ export default function NewAlarmScreen() {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
       router.back();
     } catch (err) {
+      if (createdPlaceId) {
+        try {
+          removePlace(createdPlaceId);
+        } catch (cleanupErr) {
+          console.warn('[NewAlarm] Kunde inte ta bort platsen:', cleanupErr);
+        }
+      }
       Alert.alert('Kunde inte skapa larmet', err instanceof Error ? err.message : String(err));
     } finally {
       setIsSaving(false);
