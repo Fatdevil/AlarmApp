@@ -58,6 +58,11 @@ function describe(alarm: LocalAlarm, now: Date): Headline {
     : { icon: 'exit-outline', title: place, subtitle: 'När du lämnar' };
 }
 
+/** iOS utan systemlarm: tidsdelen ligger inte i telefonens schema än (se services/notificationBudget.ts). */
+function waitingSuffix(alarm: LocalAlarm): string {
+  return alarm.notificationIds?.length ? '' : ' · läggs in när appen öppnas närmare tiden';
+}
+
 function statusText(alarm: LocalAlarm, now: Date): string | null {
   switch (alarm.status) {
     case 'PENDING_ACCEPTANCE':
@@ -71,15 +76,15 @@ function statusText(alarm: LocalAlarm, now: Date): string | null {
     case 'CANCELLED':
       return 'Avbrutet';
     case 'ACTIVE_GEOFENCE':
-      if (!isZoneArmed(alarm, now)) return `Ringer ${formatCountdown(new Date(alarm.dateTime!), now)}`;
+      if (!isZoneArmed(alarm, now)) {
+        return `Ringer ${formatCountdown(new Date(alarm.dateTime!), now)}${waitingSuffix(alarm)}`;
+      }
       return `Aktivt · ${alarm.location?.radius ?? ''} m radie`;
     case 'SCHEDULED': {
       if (!alarm.dateTime) return null;
       const next = nextOccurrence(alarm.dateTime, alarm.repeat, now);
       if (!next) return 'Har ringt';
-      // iOS utan systemlarm: ligger inte i telefonens schema än (se services/notificationBudget.ts)
-      if (!alarm.notificationIds?.length) return `Ringer ${formatCountdown(next, now)} · läggs in när appen öppnas närmare tiden`;
-      return `Ringer ${formatCountdown(next, now)}`;
+      return `Ringer ${formatCountdown(next, now)}${waitingSuffix(alarm)}`;
     }
   }
 }

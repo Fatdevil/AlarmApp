@@ -10,6 +10,7 @@ import {
   IOS_NOTIFICATION_LIMIT,
   planBudget,
   RESERVED_NOTIFICATION_SLOTS,
+  slotCost,
 } from '../logic/notificationBudget';
 import { LocalAlarm } from '../types';
 import { getAlarmsByStatus, setNotificationIds } from './db';
@@ -78,10 +79,18 @@ async function rebalance(now: Date): Promise<{ added: number; removed: number }>
     if (!keep.has(alarm.id)) continue;
     const osIds = planned.get(alarm.id)!;
     const snoozeIds = snoozes.get(alarm.id)!;
-    if (osIds.length > 0) {
+    if (osIds.length >= slotCost(alarm)) {
       const actual = [...osIds, ...snoozeIds];
       if (actual.join() !== (alarm.notificationIds ?? []).join()) setNotificationIds(alarm.id, actual);
       continue;
+    }
+    // Ofullständig uppsättning (iOS kan ha kastat några av vardagarna): bygg om hela
+    if (osIds.length > 0) {
+      const failed = await cancelReturningFailed(osIds);
+      if (failed.length > 0) {
+        setNotificationIds(alarm.id, [...failed, ...snoozeIds]);
+        continue;
+      }
     }
     try {
       setNotificationIds(alarm.id, [...(await scheduleTimeAlarm(alarm, now)), ...snoozeIds]);

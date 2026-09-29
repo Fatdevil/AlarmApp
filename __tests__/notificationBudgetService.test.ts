@@ -115,6 +115,31 @@ describe('rebalanceNotificationBudget', () => {
   });
 });
 
+describe('ofullständiga vardagslarm', () => {
+  it('bygger om ett vardagslarm som iOS delvis har kastat', async () => {
+    const weekdays = { ...alarm('vardag', 1, ['v1', 'v2']), repeat: 'WEEKDAYS' as const };
+    m(db.getAlarmsByStatus).mockReturnValue([weekdays]);
+    m(notif.getScheduledByAlarm).mockResolvedValue(new Map([['vardag', ['v1', 'v2']]]));
+    summary(2);
+    m(notif.scheduleTimeAlarm).mockResolvedValueOnce(['w1', 'w2', 'w3', 'w4', 'w5']);
+
+    await expect(rebalanceNotificationBudget(now)).resolves.toEqual({ added: 1, removed: 0 });
+    expect(notif.cancelReturningFailed).toHaveBeenCalledWith(['v1', 'v2']);
+    expect(db.setNotificationIds).toHaveBeenLastCalledWith('vardag', ['w1', 'w2', 'w3', 'w4', 'w5']);
+  });
+
+  it('en komplett uppsättning lämnas orörd', async () => {
+    const ids = ['v1', 'v2', 'v3', 'v4', 'v5'];
+    const weekdays = { ...alarm('vardag', 1, ids), repeat: 'WEEKDAYS' as const };
+    m(db.getAlarmsByStatus).mockReturnValue([weekdays]);
+    m(notif.getScheduledByAlarm).mockResolvedValue(new Map([['vardag', ids]]));
+    summary(5);
+    await rebalanceNotificationBudget(now);
+    expect(notif.cancelReturningFailed).not.toHaveBeenCalled();
+    expect(notif.scheduleTimeAlarm).not.toHaveBeenCalled();
+  });
+});
+
 describe('snoozar och samtidighet', () => {
   it('en snooze tas aldrig ut, även när larmet trängs ut', async () => {
     const { alarms, inOs } = fullSchedule();
