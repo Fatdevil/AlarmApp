@@ -1,0 +1,22 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'expo.modules.nativealarm'
+version = '0.1.0'
+
+android {
+  namespace "expo.modules.nativealarm"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+}
+
+dependencies {
+  // JVM-tester för schemaläggningslogiken (src/test). org.json behövs eftersom
+  // android.jar bara innehåller stubbar i lokala enhetstester.
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.json:json:20240303'
+}

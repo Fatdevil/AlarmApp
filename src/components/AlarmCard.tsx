@@ -1,384 +1,269 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { Pressable, Text, View } from 'react-native';
+import ReanimatedSwipeable, {
+  SwipeableMethods,
+} from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { LocalAlarm } from '../types';
 import {
-  StyleSheet,
-  Text,
-  View,
-  TouchableOpacity,
-} from 'react-native';
-import { LocalAlarm, ChecklistItem } from '../types';
-import { colors, spacing, radii, typography } from '../theme';
+  formatClock,
+  formatCountdown,
+  formatDayLabel,
+  nextOccurrence,
+  REPEAT_LABELS,
+} from '../logic/time';
+import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../theme';
+import { Button, Icon, IconName } from './ui';
 
 interface AlarmCardProps {
   alarm: LocalAlarm;
-  onToggleChecklist?: (alarmId: string, itemId: string) => void;
-  onMarkDone?: (alarm: LocalAlarm) => void;
-  onDelete?: (alarm: LocalAlarm) => void;
+  now: Date;
+  highlighted?: boolean;
+  onToggleChecklist: (alarmId: string, itemId: string) => void;
+  onComplete: (alarm: LocalAlarm) => void;
+  onDelete: (alarm: LocalAlarm) => void;
+  onAccept?: (alarm: LocalAlarm) => void;
+  onDecline?: (alarm: LocalAlarm) => void;
 }
 
-export const AlarmCard: React.FC<AlarmCardProps> = ({
-  alarm,
-  onToggleChecklist,
-  onMarkDone,
-  onDelete,
-}) => {
-  const isTime = alarm.triggerType === 'TIME';
-  const isEnter = alarm.triggerType === 'ENTER_LOCATION';
-  const isExit = alarm.triggerType === 'EXIT_LOCATION';
+interface Headline {
+  icon: IconName;
+  title: string;
+  subtitle: string | null;
+}
 
-  // Formatera tid för tidsalarm
-  const formatTimeDisplay = (isoStr?: string | null) => {
-    if (!isoStr) return '';
-    try {
-      const date = new Date(isoStr);
-      if (isNaN(date.getTime())) return '';
-      const now = new Date();
-      const isToday =
-        date.getDate() === now.getDate() &&
-        date.getMonth() === now.getMonth() &&
-        date.getFullYear() === now.getFullYear();
+function describe(alarm: LocalAlarm, now: Date): Headline {
+  if (alarm.triggerType === 'TIME' && alarm.dateTime) {
+    const next = nextOccurrence(alarm.dateTime, alarm.repeat, now);
+    const shown = next ?? new Date(alarm.dateTime);
+    const repeat = alarm.repeat && alarm.repeat !== 'NONE' ? ` · ${REPEAT_LABELS[alarm.repeat]}` : '';
+    return {
+      icon: 'alarm-outline',
+      title: formatClock(shown),
+      subtitle: `${formatDayLabel(shown, now)}${repeat}`,
+    };
+  }
+  const place = alarm.location?.name ?? 'Plats';
+  return alarm.triggerType === 'ENTER_LOCATION'
+    ? { icon: 'enter-outline', title: place, subtitle: 'När du kommer fram' }
+    : { icon: 'exit-outline', title: place, subtitle: 'När du lämnar' };
+}
 
-      const hours = String(date.getHours()).padStart(2, '0');
-      const minutes = String(date.getMinutes()).padStart(2, '0');
-      const timeStr = `${hours}:${minutes}`;
-
-      if (isToday) return `Idag ${timeStr}`;
-      const months = ['jan', 'feb', 'mar', 'apr', 'maj', 'jun', 'jul', 'aug', 'sep', 'okt', 'nov', 'dec'];
-      return `${date.getDate()} ${months[date.getMonth()]} kl. ${timeStr}`;
-    } catch {
-      return '';
+function statusText(alarm: LocalAlarm, now: Date): string | null {
+  switch (alarm.status) {
+    case 'PENDING_ACCEPTANCE':
+      return 'Väntar på ditt svar';
+    case 'MISSED':
+      return 'Missat – kunde inte schemaläggas';
+    case 'FIRED_LOCALLY':
+      return 'Har ringt';
+    case 'DONE':
+      return 'Klar';
+    case 'CANCELLED':
+      return 'Avbrutet';
+    case 'ACTIVE_GEOFENCE':
+      return `Aktivt · ${alarm.location?.radius ?? ''} m radie`;
+    case 'SCHEDULED': {
+      if (!alarm.dateTime) return null;
+      const next = nextOccurrence(alarm.dateTime, alarm.repeat, now);
+      return next ? `Ringer ${formatCountdown(next, now)}` : 'Har ringt';
     }
-  };
+  }
+}
 
-  const checklist = alarm.checklistItems || [];
-  const completedCount = checklist.filter((i) => i.done).length;
+export function AlarmCard({
+  alarm,
+  now,
+  highlighted,
+  onToggleChecklist,
+  onComplete,
+  onDelete,
+  onAccept,
+  onDecline,
+}: AlarmCardProps) {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  const swipeRef = useRef<SwipeableMethods>(null);
 
-  return (
-    <View style={styles.cardContainer}>
-      {/* Header med typ & badge */}
-      <View style={styles.headerRow}>
-        <View style={styles.triggerBadge}>
-          {isTime ? (
-            <>
-              <Text style={styles.badgeIcon}>⏰</Text>
-              <Text style={styles.badgeTextTime}>TID</Text>
-            </>
-          ) : isEnter ? (
-            <>
-              <Text style={styles.badgeIcon}>📍</Text>
-              <Text style={styles.badgeTextLocation}>NÄR DU ANLÄNDER</Text>
-            </>
-          ) : (
-            <>
-              <Text style={styles.badgeIcon}>🚗</Text>
-              <Text style={styles.badgeTextExit}>NÄR DU LÄMNAR</Text>
-            </>
-          )}
-        </View>
+  const head = describe(alarm, now);
+  const status = statusText(alarm, now);
+  const checklist = alarm.checklistItems ?? [];
+  const doneCount = checklist.filter((i) => i.done).length;
+  const isDone = alarm.status === 'DONE' || alarm.status === 'CANCELLED';
+  const isRequest = alarm.status === 'PENDING_ACCEPTANCE';
+  const needsAttention = alarm.status === 'FIRED_LOCALLY' || alarm.status === 'MISSED';
 
-        <View style={styles.privacyShield}>
-          <Text style={styles.privacyDot}>●</Text>
-          <Text style={styles.privacyText}>On-Device</Text>
-        </View>
+  const a11yLabel = [alarm.content, head.title, head.subtitle, status].filter(Boolean).join(', ');
+
+  const renderLeft = () =>
+    isDone || isRequest ? null : (
+      <View style={[styles.swipeAction, styles.swipeLeft]}>
+        <Icon name="checkmark-circle" size={26} color={colors.onAccent} />
+        <Text style={styles.swipeText}>Klar</Text>
       </View>
+    );
 
-      {/* Huvudinnehåll / Platsdetaljer */}
-      <View style={styles.contentSection}>
-        {isTime && alarm.dateTime && (
-          <Text style={styles.timeBigText}>{formatTimeDisplay(alarm.dateTime)}</Text>
-        )}
-
-        {!isTime && alarm.location && (
-          <View style={styles.locationHeaderRow}>
-            <Text style={styles.locationTitle}>{alarm.location.name}</Text>
-            <View style={styles.radiusPill}>
-              <Text style={styles.radiusText}>{alarm.location.radius} m radie</Text>
-            </View>
-          </View>
-        )}
-
-        <Text style={styles.alarmContentText}>{alarm.content}</Text>
-      </View>
-
-      {/* Checklista om den finns */}
-      {checklist.length > 0 && (
-        <View style={styles.checklistContainer}>
-          <View style={styles.checklistHeader}>
-            <Text style={styles.checklistTitle}>Checklista</Text>
-            <Text style={styles.checklistProgress}>
-              {completedCount}/{checklist.length} klara
-            </Text>
-          </View>
-
-          {checklist.map((item: ChecklistItem) => (
-            <TouchableOpacity
-              key={item.id}
-              style={styles.checklistItemRow}
-              activeOpacity={0.7}
-              onPress={() => onToggleChecklist && onToggleChecklist(alarm.id, item.id)}
-            >
-              <View style={[styles.checkbox, item.done && styles.checkboxChecked]}>
-                {item.done && <Text style={styles.checkmarkText}>✓</Text>}
-              </View>
-              <Text style={[styles.itemText, item.done && styles.itemTextDone]}>
-                {item.text}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
-
-      {/* Footer med actions */}
-      <View style={styles.footerRow}>
-        <View style={styles.statusIndicator}>
-          <Text style={styles.statusLabel}>
-            Status: <Text style={styles.statusValue}>{alarm.status}</Text>
-          </Text>
-        </View>
-
-        <View style={styles.actionButtons}>
-          {onMarkDone && alarm.status !== 'DONE' && (
-            <TouchableOpacity
-              style={styles.doneButton}
-              onPress={() => onMarkDone(alarm)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.doneButtonText}>✓ Klar</Text>
-            </TouchableOpacity>
-          )}
-          {onDelete && (
-            <TouchableOpacity
-              style={styles.deleteButton}
-              onPress={() => onDelete(alarm)}
-              activeOpacity={0.8}
-            >
-              <Text style={styles.deleteButtonText}>✕</Text>
-            </TouchableOpacity>
-          )}
-        </View>
-      </View>
+  const renderRight = () => (
+    <View style={[styles.swipeAction, styles.swipeRight]}>
+      <Text style={styles.swipeText}>Radera</Text>
+      <Icon name="trash" size={24} color={colors.onAccent} />
     </View>
   );
-};
 
-const styles = StyleSheet.create({
-  cardContainer: {
+  return (
+    <ReanimatedSwipeable
+      ref={swipeRef}
+      friction={2}
+      leftThreshold={80}
+      rightThreshold={80}
+      renderLeftActions={isDone || isRequest ? undefined : renderLeft}
+      renderRightActions={renderRight}
+      onSwipeableOpen={(direction) => {
+        swipeRef.current?.close();
+        // direction anger åt vilket håll kortet drogs: 'right' = vänster åtgärd syns
+        if (direction === 'right') onComplete(alarm);
+        else onDelete(alarm);
+      }}
+      containerStyle={styles.swipeContainer}
+    >
+      <View
+        style={[
+          styles.card,
+          needsAttention && styles.cardAttention,
+          highlighted && styles.cardHighlighted,
+          isDone && styles.cardDone,
+        ]}
+        accessible
+        accessibilityLabel={a11yLabel}
+        accessibilityActions={[
+          ...(!isDone && !isRequest ? [{ name: 'complete', label: 'Markera som klar' }] : []),
+          { name: 'delete', label: 'Radera' },
+        ]}
+        onAccessibilityAction={(e) => {
+          if (e.nativeEvent.actionName === 'complete') onComplete(alarm);
+          if (e.nativeEvent.actionName === 'delete') onDelete(alarm);
+        }}
+      >
+        <View style={styles.headerRow}>
+          <View style={styles.iconBubble}>
+            <Icon name={head.icon} size={20} color={colors.accentText} />
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.title, isDone && styles.strike]} numberOfLines={1}>
+              {head.title}
+            </Text>
+            {head.subtitle && <Text style={styles.subtitle}>{head.subtitle}</Text>}
+          </View>
+        </View>
+
+        <Text style={[styles.content, isDone && styles.strike]}>{alarm.content}</Text>
+
+        {checklist.length > 0 && (
+          <View style={styles.checklist}>
+            <Text style={styles.checklistProgress}>
+              {doneCount} av {checklist.length} klara
+            </Text>
+            {checklist.map((item) => (
+              <Pressable
+                key={item.id}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: item.done }}
+                accessibilityLabel={item.text}
+                onPress={() => onToggleChecklist(alarm.id, item.id)}
+                style={styles.checkRow}
+              >
+                <View style={[styles.checkbox, item.done && styles.checkboxOn]}>
+                  {item.done && <Icon name="checkmark" size={14} color={colors.onAccent} />}
+                </View>
+                <Text style={[styles.checkText, item.done && styles.strike]}>{item.text}</Text>
+              </Pressable>
+            ))}
+          </View>
+        )}
+
+        {status && (
+          <Text
+            style={[
+              styles.status,
+              needsAttention && { color: alarm.status === 'MISSED' ? colors.danger : colors.warning },
+            ]}
+          >
+            {status}
+          </Text>
+        )}
+
+        {isRequest ? (
+          <View style={styles.actions}>
+            <Button compact variant="secondary" title="Avböj" onPress={() => onDecline?.(alarm)} />
+            <Button compact title="Aktivera" icon="checkmark" onPress={() => onAccept?.(alarm)} />
+          </View>
+        ) : (
+          needsAttention && (
+            <View style={styles.actions}>
+              <Button compact title="Klar" icon="checkmark" onPress={() => onComplete(alarm)} />
+            </View>
+          )
+        )}
+      </View>
+    </ReanimatedSwipeable>
+  );
+}
+
+const useStyles = makeStyles(({ colors }) => ({
+  swipeContainer: { marginBottom: spacing.md, borderRadius: radii.card },
+  card: {
     backgroundColor: colors.surface,
     borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
     padding: spacing.lg,
-    marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.25,
-    shadowRadius: 10,
-    elevation: 3,
-  },
-  headerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.sm,
-  },
-  triggerBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: colors.surfaceElevated,
-    paddingHorizontal: spacing.sm,
-    paddingVertical: 3,
-    borderRadius: radii.sm,
-  },
-  badgeIcon: {
-    fontSize: 11,
-    marginRight: 4,
-  },
-  badgeTextTime: {
-    color: colors.accentCyan,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  badgeTextLocation: {
-    color: colors.accentCobalt,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  badgeTextExit: {
-    color: colors.warningAmber,
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 0.5,
-  },
-  privacyShield: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(16, 185, 129, 0.1)',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: radii.pill,
-    borderWidth: 1,
-    borderColor: 'rgba(16, 185, 129, 0.25)',
-  },
-  privacyDot: {
-    color: colors.privacyEmerald,
-    fontSize: 8,
-    marginRight: 4,
-  },
-  privacyText: {
-    color: colors.privacyEmerald,
-    fontSize: 10,
-    fontWeight: '600',
-  },
-  contentSection: {
-    marginVertical: spacing.xs,
-  },
-  timeBigText: {
-    fontSize: 24,
-    fontWeight: '800',
-    color: colors.textPrimary,
-    letterSpacing: -0.5,
-    marginBottom: 4,
-  },
-  locationHeaderRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 4,
-  },
-  locationTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: colors.textPrimary,
-    flex: 1,
-  },
-  radiusPill: {
-    backgroundColor: colors.surfaceHighlight,
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: radii.pill,
-  },
-  radiusText: {
-    color: colors.accentCyan,
-    fontSize: 11,
-    fontWeight: '600',
-  },
-  alarmContentText: {
-    fontSize: 14,
-    color: colors.textSecondary,
-    lineHeight: 20,
-  },
-  checklistContainer: {
-    marginTop: spacing.md,
-    backgroundColor: 'rgba(0,0,0,0.2)',
-    padding: spacing.md,
-    borderRadius: radii.md,
-    borderWidth: 1,
-    borderColor: colors.border,
-  },
-  checklistHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: spacing.xs,
-  },
-  checklistTitle: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: colors.textSecondary,
-    textTransform: 'uppercase',
-    letterSpacing: 0.5,
-  },
-  checklistProgress: {
-    fontSize: 11,
-    color: colors.accentCyan,
-    fontWeight: '600',
-  },
-  checklistItemRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 5,
-  },
-  checkbox: {
-    width: 18,
-    height: 18,
-    borderRadius: 5,
-    borderWidth: 1.5,
-    borderColor: colors.textMuted,
-    marginRight: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxChecked: {
-    backgroundColor: colors.accentCyan,
-    borderColor: colors.accentCyan,
-  },
-  checkmarkText: {
-    color: colors.textDark,
-    fontSize: 12,
-    fontWeight: '800',
-    lineHeight: 14,
-  },
-  itemText: {
-    fontSize: 13,
-    color: colors.textPrimary,
-    flex: 1,
-  },
-  itemTextDone: {
-    color: colors.textMuted,
-    textDecorationLine: 'line-through',
-  },
-  footerRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: spacing.md,
-    paddingTop: spacing.sm,
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-  },
-  statusIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  statusLabel: {
-    fontSize: 11,
-    color: colors.textMuted,
-  },
-  statusValue: {
-    color: colors.textSecondary,
-    fontWeight: '600',
-  },
-  actionButtons: {
-    flexDirection: 'row',
     gap: spacing.sm,
   },
-  doneButton: {
-    backgroundColor: 'rgba(16, 185, 129, 0.15)',
-    borderWidth: 1,
-    borderColor: colors.privacyEmerald,
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: radii.sm,
-  },
-  doneButtonText: {
-    color: colors.privacyEmerald,
-    fontSize: 12,
-    fontWeight: '700',
-  },
-  deleteButton: {
-    backgroundColor: 'rgba(244, 63, 94, 0.12)',
-    borderWidth: 1,
-    borderColor: 'rgba(244, 63, 94, 0.3)',
-    width: 28,
-    height: 28,
-    borderRadius: radii.sm,
+  cardAttention: { borderColor: colors.warning },
+  cardHighlighted: { borderColor: colors.accentText, borderWidth: 2 },
+  cardDone: { opacity: 0.7 },
+  headerRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  iconBubble: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surfaceHighlight,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  deleteButtonText: {
-    color: colors.dangerCoral,
-    fontSize: 12,
-    fontWeight: '700',
+  title: { ...typography.title, color: colors.textPrimary },
+  subtitle: { ...typography.footnote, color: colors.textSecondary },
+  content: { ...typography.body, color: colors.textPrimary },
+  strike: { textDecorationLine: 'line-through' },
+  checklist: {
+    backgroundColor: colors.background,
+    borderRadius: radii.md,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
-});
+  checklistProgress: { ...typography.footnote, color: colors.textMuted, paddingTop: spacing.sm },
+  checkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: MIN_TOUCH },
+  checkbox: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.borderStrong,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  checkboxOn: { backgroundColor: colors.accent, borderColor: colors.accent },
+  checkText: { ...typography.body, color: colors.textPrimary, flex: 1 },
+  status: { ...typography.footnote, color: colors.textMuted },
+  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.sm },
+  swipeAction: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    borderRadius: radii.card,
+  },
+  swipeLeft: { backgroundColor: '#047857', justifyContent: 'flex-start' },
+  swipeRight: { backgroundColor: '#BE123C', justifyContent: 'flex-end' },
+  swipeText: { ...typography.callout, fontWeight: '700', color: colors.onAccent },
+}));

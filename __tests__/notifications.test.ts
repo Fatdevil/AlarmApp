@@ -1,0 +1,182 @@
+import { LocalAlarm } from '../src/types';
+
+jest.mock('expo-notifications', () => ({
+  setNotificationHandler: jest.fn(),
+  scheduleNotificationAsync: jest.fn(async () => 'notif-1'),
+  cancelScheduledNotificationAsync: jest.fn(),
+  cancelAllScheduledNotificationsAsync: jest.fn(),
+  getAllScheduledNotificationsAsync: jest.fn(async () => []),
+  SchedulableTriggerInputTypes: { DATE: 'date', DAILY: 'daily', WEEKLY: 'weekly' },
+  AndroidNotificationPriority: { MAX: 'max' },
+}));
+jest.mock('expo-crypto', () => {
+  let n = 0;
+  return { randomUUID: () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}` };
+});
+jest.mock('../modules/native-alarm', () => ({
+  getNativeAlarmAuthorization: jest.fn(async () => 'authorized'),
+  scheduleNativeAlarm: jest.fn(async () => {}),
+  cancelNativeAlarm: jest.fn(async () => {}),
+  cancelAllNativeAlarms: jest.fn(async () => {}),
+  getScheduledNativeAlarmIds: jest.fn(async () => []),
+}));
+jest.mock('../src/services/db', () => ({
+  clearPendingAlarmCancellations: jest.fn(),
+  enqueuePendingAlarmCancellations: jest.fn(),
+  getPendingAlarmCancellations: jest.fn(() => []),
+  removePendingAlarmCancellations: jest.fn(),
+}));
+
+/* eslint-disable import/first */
+import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
+import * as Native from '../modules/native-alarm';
+import * as db from '../src/services/db';
+import {
+  cancelAllScheduledNotifications,
+  CancelNotificationsError,
+  cancelNotifications,
+  cancelNotificationsBestEffort,
+  getScheduledByAlarm,
+  retryPendingAlarmCancellations,
+  scheduleTimeAlarm,
+} from '../src/services/notifications';
+/* eslint-enable import/first */
+
+const UUID = '0b8f6c2e-1d2a-4c3b-9e8f-7a6b5c4d3e2f';
+const future = new Date(Date.now() + 3600_000).toISOString();
+
+function alarm(overrides: Partial<LocalAlarm> = {}): LocalAlarm {
+  return {
+    id: `alarm_${UUID}`,
+    creatorId: 'ME',
+    recipientId: 'ME',
+    content: 'Väckning',
+    triggerType: 'TIME',
+    dateTime: future,
+    repeat: 'NONE',
+    status: 'SCHEDULED',
+    createdAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+beforeEach(() => {
+  jest.clearAllMocks();
+  (db.getPendingAlarmCancellations as jest.Mock).mockReset().mockReturnValue([]);
+});
+
+describe('cancelNotifications', () => {
+  it('försöker med alla ID:n och rapporterar de som misslyckades', async () => {
+    (Native.cancelNativeAlarm as jest.Mock).mockRejectedValueOnce(new Error('fel'));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    const err = await cancelNotifications([`native:${UUID}`, 'notif-1']).catch((e) => e);
+    expect(err).toBeInstanceOf(CancelNotificationsError);
+    expect(err.failedIds).toEqual([`native:${UUID}`]);
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith('notif-1');
+  });
+
+  it('sparar ID:t beständigt när en rollback inte kan avboka larmet', async () => {
+    (Native.cancelNativeAlarm as jest.Mock).mockRejectedValueOnce(new Error('OS svarar inte'));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(cancelNotificationsBestEffort([`native:${UUID}`, 'notif-1'])).resolves.toBeUndefined();
+
+    expect(db.enqueuePendingAlarmCancellations).toHaveBeenCalledWith([`native:${UUID}`]);
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith('notif-1');
+  });
+
+  it('kastar aldrig, inte ens när kön inte går att skriva (ursprungsfelet ska synas)', async () => {
+    (Native.cancelNativeAlarm as jest.Mock).mockRejectedValueOnce(new Error('OS svarar inte'));
+    (db.enqueuePendingAlarmCancellations as jest.Mock).mockImplementationOnce(() => {
+      throw new Error('databasen är låst');
+    });
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(cancelNotificationsBestEffort([`native:${UUID}`])).resolves.toBeUndefined();
+  });
+
+  it('tar bara bort lyckade ID:n när rollback-kön försöks igen', async () => {
+    (db.getPendingAlarmCancellations as jest.Mock).mockReturnValue([`native:${UUID}`, 'notif-1']);
+    (Native.cancelNativeAlarm as jest.Mock).mockRejectedValueOnce(new Error('fortfarande fel'));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(retryPendingAlarmCancellations()).resolves.toBe(1);
+
+    expect(db.removePendingAlarmCancellations).toHaveBeenCalledWith(['notif-1']);
+  });
+
+  it('tömmer rollback-kön när nästa försök lyckas', async () => {
+    (db.getPendingAlarmCancellations as jest.Mock).mockReturnValue([`native:${UUID}`]);
+
+    await expect(retryPendingAlarmCancellations()).resolves.toBe(1);
+
+    expect(db.removePendingAlarmCancellations).toHaveBeenCalledWith([`native:${UUID}`]);
+  });
+});
+
+describe('scheduleTimeAlarm', () => {
+  it('använder systemlarm när de är tillåtna, med larmets UUID', async () => {
+    await expect(scheduleTimeAlarm(alarm())).resolves.toEqual([`native:${UUID}`]);
+    expect(Native.scheduleNativeAlarm).toHaveBeenCalledWith(
+      expect.objectContaining({ id: UUID, title: 'Väckning', weekdays: [] })
+    );
+    expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  });
+
+  it('skickar veckodagar för upprepning', async () => {
+    await scheduleTimeAlarm(alarm({ repeat: 'WEEKDAYS' }));
+    expect(Native.scheduleNativeAlarm).toHaveBeenCalledWith(
+      expect.objectContaining({ weekdays: [2, 3, 4, 5, 6] })
+    );
+    await scheduleTimeAlarm(alarm({ repeat: 'DAILY' }));
+    expect(Native.scheduleNativeAlarm).toHaveBeenLastCalledWith(
+      expect.objectContaining({ weekdays: [1, 2, 3, 4, 5, 6, 7] })
+    );
+  });
+
+  it('faller tillbaka till notis om systemlarm inte är tillåtna', async () => {
+    (Native.getNativeAlarmAuthorization as jest.Mock).mockResolvedValueOnce('unavailable');
+    await expect(scheduleTimeAlarm(alarm())).resolves.toEqual(['notif-1']);
+    expect(Native.scheduleNativeAlarm).not.toHaveBeenCalled();
+  });
+
+  it('faller tillbaka till notis om systemlarmet misslyckas', async () => {
+    (Native.scheduleNativeAlarm as jest.Mock).mockRejectedValueOnce(new Error('nej'));
+    await expect(scheduleTimeAlarm(alarm())).resolves.toEqual(['notif-1']);
+  });
+
+  it('vägrar passerad tid för engångslarm', async () => {
+    const past = new Date(Date.now() - 60_000).toISOString();
+    await expect(scheduleTimeAlarm(alarm({ dateTime: past }))).rejects.toThrow('passerat');
+    expect(Native.scheduleNativeAlarm).not.toHaveBeenCalled();
+  });
+});
+
+describe('cancelNotifications', () => {
+  it('avbryter systemlarm och notiser via rätt API', async () => {
+    await cancelNotifications([`native:${UUID}`, 'notif-1']);
+    expect(Native.cancelNativeAlarm).toHaveBeenCalledWith(UUID);
+    expect(Notifications.cancelScheduledNotificationAsync).toHaveBeenCalledWith('notif-1');
+  });
+});
+
+describe('getScheduledByAlarm', () => {
+  it('matchar systemlarm (och Android-snooze) mot sparade ID:n', async () => {
+    (Native.getScheduledNativeAlarmIds as jest.Mock).mockResolvedValueOnce([`${UUID}:snooze`]);
+    const a = alarm({ notificationIds: [`native:${UUID}`] });
+    const b = alarm({ id: 'alarm_other', notificationIds: ['native:ffffffff-ffff-4fff-8fff-ffffffffffff'] });
+    const map = await getScheduledByAlarm([a, b]);
+    expect(map.get(a.id)).toEqual([`native:${UUID}`]);
+    expect(map.has(b.id)).toBe(false);
+  });
+});
+
+describe('cancelAllScheduledNotifications', () => {
+  it('avbryter även systemlarm (annars ringer de efter "Radera all data")', async () => {
+    await cancelAllScheduledNotifications();
+    expect(Native.cancelAllNativeAlarms).toHaveBeenCalled();
+    expect(Notifications.cancelAllScheduledNotificationsAsync).toHaveBeenCalled();
+    expect(db.clearPendingAlarmCancellations).toHaveBeenCalled();
+  });
+});
