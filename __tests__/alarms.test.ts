@@ -15,6 +15,11 @@ jest.mock('../src/services/notifications', () => ({
   cancelNotifications: jest.fn(),
   cancelNotificationsBestEffort: jest.fn(),
   getScheduledByAlarm: jest.fn(async () => new Map()),
+  isNotificationBudgetLimited: jest.fn(async () => false),
+}));
+jest.mock('../src/services/notificationBudget', () => ({
+  rebalanceNotificationBudget: jest.fn(async () => ({ added: 0, removed: 0 })),
+  shouldDeferScheduling: jest.fn(async () => false),
 }));
 jest.mock('../src/services/geofence', () => ({
   assertCanAddGeofence: jest.fn(),
@@ -25,6 +30,7 @@ jest.mock('../src/services/diagnostics', () => ({ logEvent: jest.fn() }));
 /* eslint-disable import/first */
 import * as db from '../src/services/db';
 import * as geo from '../src/services/geofence';
+import * as budget from '../src/services/notificationBudget';
 import * as notif from '../src/services/notifications';
 import {
   acknowledgeAlarm,
@@ -308,5 +314,40 @@ describe('snoozeAlarm', () => {
     await snoozeAlarm('alarm_1');
     expect(db.setNotificationIds).toHaveBeenCalledWith('alarm_1', ['n1', 's1']);
     expect(db.updateAlarmStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('notisbudget (iOS utan AlarmKit)', () => {
+  it('ett larm som inte ryms sparas utan OS-ID:n och väntar på påfyllning', async () => {
+    m(budget.shouldDeferScheduling).mockResolvedValueOnce(true);
+    const saved = await createAlarm(alarm());
+    expect(notif.scheduleTimeAlarm).not.toHaveBeenCalled();
+    expect(saved).toMatchObject({ status: 'SCHEDULED', notificationIds: [] });
+    expect(budget.rebalanceNotificationBudget).toHaveBeenCalled();
+  });
+
+  it('klar och radera fyller på schemat', async () => {
+    m(db.getAlarm).mockReturnValue(alarm({ notificationIds: ['n1'] }));
+    await completeAlarm('alarm_1');
+    await removeAlarm('alarm_1');
+    expect(budget.rebalanceNotificationBudget).toHaveBeenCalledTimes(2);
+  });
+
+  it('ett fel i påfyllningen stoppar inte "Klar"', async () => {
+    m(db.getAlarm).mockReturnValue(alarm({ notificationIds: ['n1'] }));
+    m(budget.rebalanceNotificationBudget).mockRejectedValueOnce(new Error('iOS'));
+    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    await expect(completeAlarm('alarm_1')).resolves.toBeTruthy();
+  });
+
+  it('startkontrollen låter påfyllningen lägga in saknade larm', async () => {
+    m(notif.isNotificationBudgetLimited).mockResolvedValueOnce(true);
+    m(db.getAlarmsByStatus).mockImplementation((statuses) =>
+      statuses.includes('SCHEDULED') ? [alarm({ notificationIds: [] })] : []
+    );
+    m(budget.rebalanceNotificationBudget).mockResolvedValueOnce({ added: 1, removed: 0 });
+    const r = await reconcileScheduledAlarms();
+    expect(notif.scheduleTimeAlarm).not.toHaveBeenCalled();
+    expect(r.rescheduled).toBe(1);
   });
 });

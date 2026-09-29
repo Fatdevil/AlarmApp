@@ -291,6 +291,20 @@ export async function retryPendingAlarmCancellations(): Promise<number> {
   return succeeded.length;
 }
 
+/**
+ * Sant när tidslarm ringer som notiser på iOS (utan AlarmKit). Då gäller iOS gräns på
+ * 64 schemalagda notiser och schemat måste fyllas på (se services/notificationBudget.ts).
+ */
+export async function isNotificationBudgetLimited(): Promise<boolean> {
+  if (Platform.OS !== 'ios') return false;
+  return (await getNativeAlarmAuthorization()) !== 'authorized';
+}
+
+/** Antal notiser som ligger i telefonens schema just nu (alla slag). */
+export async function countScheduledNotifications(): Promise<number> {
+  return (await Notifications.getAllScheduledNotificationsAsync()).length;
+}
+
 /** Avbryter allt appen har schemalagt: notiser och systemlarm (AlarmKit/AlarmManager). */
 export async function cancelAllScheduledNotifications(): Promise<void> {
   await cancelAllNativeAlarms();

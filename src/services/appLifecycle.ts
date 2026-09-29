@@ -4,6 +4,7 @@
 import * as Notifications from 'expo-notifications';
 import { acknowledgeAlarm, markFired, reconcileScheduledAlarms, snoozeAlarm } from './alarms';
 import { syncGeofencesWithOs } from './geofence';
+import { rebalanceNotificationBudget } from './notificationBudget';
 import {
   ACTION_ACCEPT,
   ACTION_DECLINE,
@@ -41,6 +42,7 @@ export async function initializeApp(): Promise<void> {
 export async function handleAppForeground(): Promise<void> {
   const steps: [string, () => Promise<unknown>][] = [
     ['avbokningar', retryPendingAlarmCancellations],
+    ['notisschema', rebalanceNotificationBudget],
     ['geofences', syncGeofencesWithOs],
   ];
   for (const [name, step] of steps) {

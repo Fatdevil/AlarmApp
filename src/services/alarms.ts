@@ -21,15 +21,31 @@ import {
   cancelNotifications,
   cancelNotificationsBestEffort,
   getScheduledByAlarm,
+  isNotificationBudgetLimited,
   scheduleSnooze,
   scheduleTimeAlarm,
 } from './notifications';
+import { rebalanceNotificationBudget, shouldDeferScheduling } from './notificationBudget';
+
+/** Fyller på telefonens notisschema (iOS utan AlarmKit). Får aldrig stoppa det som anropar. */
+async function refillSchedule(): Promise<void> {
+  await rebalanceNotificationBudget().catch((err) => console.warn('[Alarms] Påfyllning:', err));
+}
+
+/**
+ * Schemalägger tidsdelen, eller ingenting om larmet inte ryms i iOS notisschema just nu –
+ * då läggs det in av påfyllningen när det blir plats (se services/notificationBudget.ts).
+ */
+async function scheduleOrDefer(alarm: LocalAlarm): Promise<string[]> {
+  if (await shouldDeferScheduling(alarm)) return [];
+  return scheduleTimeAlarm(alarm);
+}
 
 /** Sparar ett nytt larm och aktiverar det i OS. Kastar (utan sidoeffekter) vid fel. */
 export async function createAlarm(alarm: LocalAlarm): Promise<LocalAlarm> {
   if (alarm.triggerType === 'TIME') {
     // Schemalägg först – då finns inget att rulla tillbaka i databasen om det misslyckas
-    const notificationIds = await scheduleTimeAlarm(alarm);
+    const notificationIds = await scheduleOrDefer(alarm);
     const saved: LocalAlarm = { ...alarm, status: 'SCHEDULED', notificationIds };
     try {
       saveAlarm(saved);
@@ -41,12 +57,13 @@ export async function createAlarm(alarm: LocalAlarm): Promise<LocalAlarm> {
       scheduledTime: alarm.dateTime,
       note: `Upprepning: ${alarm.repeat ?? 'NONE'}, notiser: ${notificationIds.length}`,
     });
+    await refillSchedule();
     return saved;
   }
 
   assertCanAddGeofence(alarm);
   // Uppföljning vid plats: tidspåminnelsen schemaläggs först (se logic/followUp.ts)
-  const notificationIds = hasTimeReminder(alarm) ? await scheduleTimeAlarm({ ...alarm, repeat: 'NONE' }) : [];
+  const notificationIds = hasTimeReminder(alarm) ? await scheduleOrDefer({ ...alarm, repeat: 'NONE' }) : [];
   const saved: LocalAlarm = { ...alarm, status: 'ACTIVE_GEOFENCE', repeat: 'NONE', notificationIds };
   try {
     saveAlarm(saved);
@@ -70,6 +87,7 @@ export async function createAlarm(alarm: LocalAlarm): Promise<LocalAlarm> {
     },
     note: `Radie ${saved.location!.radius} m`,
   });
+  if (hasTimeReminder(saved)) await refillSchedule();
   return saved;
 }
 
@@ -87,6 +105,7 @@ export async function completeAlarm(alarmId: string): Promise<LocalAlarm | null>
   setNotificationIds(alarm.id, []);
   updateAlarmStatus(alarm.id, 'DONE', new Date().toISOString());
   await syncGeofencesIfNeeded(alarm);
+  await refillSchedule(); // en plats i notisschemat kan ha blivit ledig
   return alarm;
 }
 
@@ -97,6 +116,7 @@ export async function removeAlarm(alarmId: string): Promise<LocalAlarm | null> {
   await cancelNotifications(alarm.notificationIds);
   dbDeleteAlarm(alarm.id);
   await syncGeofencesIfNeeded(alarm);
+  await refillSchedule();
   return alarm;
 }
 
@@ -187,6 +207,8 @@ export async function reconcileScheduledAlarms(now: Date = new Date()): Promise<
     (a) => hasTimeReminder(a) && !isZoneArmed(a, now)
   );
   const inOs = await getScheduledByAlarm([...scheduled, ...followUps]);
+  // iOS utan AlarmKit: saknade larm läggs in av påfyllningen nedan, inom gränsen på 64
+  const budgeted = await isNotificationBudgetLimited();
 
   for (const alarm of followUps) {
     const osIds = inOs.get(alarm.id) ?? [];
@@ -194,6 +216,7 @@ export async function reconcileScheduledAlarms(now: Date = new Date()): Promise<
       if (osIds.join() !== (alarm.notificationIds ?? []).join()) setNotificationIds(alarm.id, osIds);
       continue;
     }
+    if (budgeted) continue;
     try {
       setNotificationIds(alarm.id, await scheduleTimeAlarm(alarm, now));
       result.rescheduled++;
@@ -220,6 +243,7 @@ export async function reconcileScheduledAlarms(now: Date = new Date()): Promise<
     }
 
     if (osIds.length === 0) {
+      if (budgeted) continue;
       try {
         // Upprepade larm använder bara klockslaget, engångslarm har här en framtida tid
         const ids = await scheduleTimeAlarm(alarm, now);
@@ -232,6 +256,8 @@ export async function reconcileScheduledAlarms(now: Date = new Date()): Promise<
       setNotificationIds(alarm.id, osIds);
     }
   }
+
+  if (budgeted) result.rescheduled += (await rebalanceNotificationBudget(now)).added;
 
   await logEvent(
     'BOOT_RESTORE_TRIGGERED',

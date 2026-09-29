@@ -68,8 +68,11 @@ En tidspåminnelse kan följas upp vid en sparad plats ("Följ upp vid plats"): 
 tiden och påminner sedan igen när du lämnar eller kommer till platsen. "Klar" stänger båda;
 snooza eller stäng av tidslarmet för att låta platsen fortsätta bevakas. Zonen registreras
 direkt men larmar först vid en passage efter tiden; är du redan där när tiden kommer är
-tidslarmet påminnelsen, och platsen påminner nästa gång tills du trycker "Klar". Planerat härnäst: påfyllning av iOS-notiser (som också gör
-det möjligt för upprepade påminnelser att börja ett senare datum). Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
+tidslarmet påminnelsen, och platsen påminner nästa gång tills du trycker "Klar". På iPhone utan systemlarm (iOS 17–18 eller nekad larmbehörighet) ringer påminnelser som
+notiser, och iOS håller högst 64 i schemat. Appen håller då de närmast kommande där och fyller
+på resten när appen öppnas, kommer till förgrunden eller när larm blir klara/raderas
+(`src/services/notificationBudget.ts`). Upprepade påminnelser börjar fortfarande direkt –
+AlarmKit kan inte vänta med att börja upprepa. Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
 enhetstesterna nedan och kräver en server med inloggning.
 
 **Integritet:** positionen lämnar aldrig telefonen och ingen kan följa någons GPS – se
@@ -91,6 +94,7 @@ Om modulen saknas eller behörighet nekas används `expo-notifications` automati
 - [ ] iOS 26: skapa larm om 1 min, lås telefonen, sätt tyst läge → larmet ringer i helskärm
 - [ ] iOS 26: upprepat larm (vardagar) visas i systemets larmlista och kan stängas av
 - [ ] iOS 17–18: larm faller tillbaka till notis, appen startar utan krasch
+- [ ] iOS 17–18: skapa 70 påminnelser en per dag → de närmaste ringer; kortet för de senaste säger "läggs in när appen öppnas närmare tiden"; radera en tidig → en väntande läggs in
 - [ ] Android 14+: larm om 1 min med skärmen släckt → helskärmsvy, ljud tills "Stäng av"
 - [ ] Android: "Snooza" ringer igen efter 10 min
 - [ ] Android: starta om telefonen → schemalagda larm ringer fortfarande

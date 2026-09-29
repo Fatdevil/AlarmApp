@@ -76,7 +76,10 @@ function statusText(alarm: LocalAlarm, now: Date): string | null {
     case 'SCHEDULED': {
       if (!alarm.dateTime) return null;
       const next = nextOccurrence(alarm.dateTime, alarm.repeat, now);
-      return next ? `Ringer ${formatCountdown(next, now)}` : 'Har ringt';
+      if (!next) return 'Har ringt';
+      // iOS utan systemlarm: ligger inte i telefonens schema än (se services/notificationBudget.ts)
+      if (!alarm.notificationIds?.length) return `Ringer ${formatCountdown(next, now)} · läggs in när appen öppnas närmare tiden`;
+      return `Ringer ${formatCountdown(next, now)}`;
     }
   }
 }
