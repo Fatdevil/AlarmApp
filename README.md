@@ -62,9 +62,10 @@ Diagnostikvyn nås via Inställningar → tryck 7 gånger på versionsnumret (al
 Appen är en påminnelseapp med tid och plats – inte en ersättning för telefonens
 väckarklocka (den togs bort för att fokusera på det som skiljer appen från Klocka-appen).
 
-Agendan visar kommande påminnelser dag för dag, även långt fram i tiden. Planerad ordning
-härnäst: sparade platser → "tid → följ upp vid plats" → påfyllning av iOS-notiser (som också
-gör det möjligt för upprepade påminnelser att börja ett senare datum). Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
+Agendan visar kommande påminnelser dag för dag, även långt fram i tiden. Sparade platser
+(Inställningar → Mina platser) kan väljas direkt i "Nytt larm"; larm på samma plats delar en zon.
+Planerad ordning härnäst: "tid → följ upp vid plats" → påfyllning av iOS-notiser (som också gör
+det möjligt för upprepade påminnelser att börja ett senare datum). Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
 enhetstesterna nedan och kräver en server med inloggning.
 
 **Integritet:** positionen lämnar aldrig telefonen och ingen kan följa någons GPS – se
@@ -96,4 +97,8 @@ Om modulen saknas eller behörighet nekas används `expo-notifications` automati
 - [ ] Skapa/ta bort ett annat platslarm → befintliga platslarm larmar inte av omregistreringen
 - [ ] Agenda: tryck på en tom dag om en månad → "Nytt larm" med kl. 09:00 den dagen; påminnelsen syns under rätt dag
 - [ ] Agenda: tryck på en dag med prick → listan hoppar till dagen, även långt ner
+- [ ] Mina platser: spara Hemma och Jobbet; välj dem i "Nytt larm" utan att söka
+- [ ] Två larm på "Jobbet" → båda larmar när du lämnar jobbet
+- [ ] Flytta "Jobbet" med ett aktivt larm → larmet följer med och larmar inte direkt av omregistreringen
+- [ ] Ta bort en plats som används → larmet finns kvar och fungerar
 - [ ] Agenda: ett dagligt larm syns varje dag de närmaste två veckorna; platslarm under "Väntar på plats"

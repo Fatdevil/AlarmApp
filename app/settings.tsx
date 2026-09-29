@@ -137,6 +137,23 @@ export default function SettingsScreen() {
       </View>
 
       <View style={styles.section}>
+        <SectionLabel>Platser</SectionLabel>
+        <Card>
+          <Pressable
+            accessibilityRole="button"
+            onPress={() => router.push('/places')}
+            style={styles.versionRow}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={styles.rowTitle}>Mina platser</Text>
+              <Text style={styles.rowText}>Hemma, Jobbet och andra platser du använder ofta</Text>
+            </View>
+            <Icon name="chevron-forward" size={18} />
+          </Pressable>
+        </Card>
+      </View>
+
+      <View style={styles.section}>
         <SectionLabel>Integritet</SectionLabel>
         <Card style={{ gap: spacing.md }}>
           <Text style={styles.rowTitle}>Din position stannar i telefonen</Text>
@@ -146,11 +163,11 @@ export default function SettingsScreen() {
             någon server.
           </Text>
           <Text style={styles.rowText}>
-            Om en vän skickar ett platslarm till dig måste du själv godkänna det. Vännen får bara
-            veta att larmet är aktiverat – aldrig var du är eller om du har passerat platsen.
+            Ingen kan följa din position via appen, och det går inte att slå på. Appen har i dag
+            ingen server och skickar ingenting från telefonen.
           </Text>
           <Text style={styles.rowText}>
-            Larm och historik sparas i appens lokala databas på telefonen och skyddas av
+            Larm, sparade platser och historik sparas i appens lokala databas på telefonen och skyddas av
             telefonens egen kryptering och skärmlås.
           </Text>
         </Card>
