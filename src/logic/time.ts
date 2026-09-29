@@ -87,13 +87,29 @@ export function nextOccurrence(
   if (isNaN(first.getTime())) return null;
   if (repeat === 'NONE') return first.getTime() > now.getTime() ? first : null;
 
-  const candidate = new Date(now);
+  // Upprepade larm börjar alltid direkt: bara klockslaget i den första tiden används.
+  // iOS (AlarmKit och notiser) kan inte vänta med att börja upprepa, så ett startdatum
+  // längre fram skulle visas fel. Android schemaläggs på samma sätt, se scheduleTimeAlarm.
+  const from = now;
+  const candidate = new Date(from);
   candidate.setHours(first.getHours(), first.getMinutes(), 0, 0);
-  if (candidate.getTime() <= now.getTime()) candidate.setDate(candidate.getDate() + 1);
+  if (candidate.getTime() <= from.getTime()) candidate.setDate(candidate.getDate() + 1);
   if (repeat === 'WEEKDAYS') {
     while (!isWeekday(candidate)) candidate.setDate(candidate.getDate() + 1);
   }
   return candidate;
+}
+
+/**
+ * Första tillfället för ett nytt upprepat larm: nästa gång klockslaget i [chosen] infaller
+ * från [now]. Ett valt datum längre fram ignoreras, eftersom upprepningar alltid börjar
+ * direkt (se nextOccurrence).
+ */
+export function repeatingStart(chosen: Date, repeat: RepeatRule, now: Date = new Date()): Date {
+  const clock = new Date(now);
+  clock.setHours(chosen.getHours(), chosen.getMinutes(), 0, 0);
+  clock.setDate(clock.getDate() - 7); // säkert i det förflutna, så att nextOccurrence räknar från now
+  return nextOccurrence(clock.toISOString(), repeat, now)!;
 }
 
 const clockFormat = new Intl.DateTimeFormat(LOCALE, { hour: '2-digit', minute: '2-digit' });
@@ -113,6 +129,24 @@ export function formatDayLabel(date: Date, now: Date = new Date()): string {
   yesterday.setDate(now.getDate() - 1);
   if (isSameDay(date, yesterday)) return 'Igår';
   return dayFormat.format(date);
+}
+
+const longDayFormat = new Intl.DateTimeFormat(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' });
+const longDayYearFormat = new Intl.DateTimeFormat(LOCALE, {
+  weekday: 'long',
+  day: 'numeric',
+  month: 'long',
+  year: 'numeric',
+});
+
+/** Rubrik för en dag i agendan: "Idag", "Imorgon", "fredag 3 oktober" (med år om det inte är i år). */
+export function formatAgendaDay(date: Date, now: Date = new Date()): string {
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  if (isSameDay(date, now)) return 'Idag';
+  if (isSameDay(date, tomorrow)) return 'Imorgon';
+  const text = (date.getFullYear() === now.getFullYear() ? longDayFormat : longDayYearFormat).format(date);
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 /** "om 25 min", "om 3 tim 5 min", "om 2 dagar". */

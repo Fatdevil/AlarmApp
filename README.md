@@ -48,7 +48,7 @@ GitHub Actions kör båda kontrollstegen automatiskt på varje pull request och 
 
 | Mapp | Innehåll |
 |---|---|
-| `app/(tabs)/` | Startsidan: påminnelser (Agenda läggs till som egen flik) |
+| `app/(tabs)/` | Flikarna Påminnelser och Agenda |
 | `app/` | Övriga skärmar: nytt larm, inställningar, diagnostik |
 | `src/logic/` | Ren logik utan native-beroenden (tid, sektioner, validering) – enhetstestad |
 | `src/services/` | Databas, notiser, geofencing, push och larmflöden (`alarms.ts`) |
@@ -62,8 +62,9 @@ Diagnostikvyn nås via Inställningar → tryck 7 gånger på versionsnumret (al
 Appen är en påminnelseapp med tid och plats – inte en ersättning för telefonens
 väckarklocka (den togs bort för att fokusera på det som skiljer appen från Klocka-appen).
 
-Planerad ordning: agenda/kalender → sparade platser → "tid → följ upp vid plats" →
-påfyllning av iOS-notiser. Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
+Agendan visar kommande påminnelser dag för dag, även långt fram i tiden. Planerad ordning
+härnäst: sparade platser → "tid → följ upp vid plats" → påfyllning av iOS-notiser (som också
+gör det möjligt för upprepade påminnelser att börja ett senare datum). Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
 enhetstesterna nedan och kräver en server med inloggning.
 
 **Integritet:** positionen lämnar aldrig telefonen och ingen kan följa någons GPS – se
@@ -93,3 +94,6 @@ Om modulen saknas eller behörighet nekas används `expo-notifications` automati
 - [ ] Platslarm "lämnar Jobbet" skapat hemma → larmar inte direkt; larmar först när du lämnar jobbet
 - [ ] Platslarm "kommer hem" skapat hemma → larmar inte direkt; larmar när du går och kommer tillbaka
 - [ ] Skapa/ta bort ett annat platslarm → befintliga platslarm larmar inte av omregistreringen
+- [ ] Agenda: tryck på en tom dag om en månad → "Nytt larm" med kl. 09:00 den dagen; påminnelsen syns under rätt dag
+- [ ] Agenda: tryck på en dag med prick → listan hoppar till dagen, även långt ner
+- [ ] Agenda: ett dagligt larm syns varje dag de närmaste två veckorna; platslarm under "Väntar på plats"

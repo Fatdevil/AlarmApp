@@ -32,8 +32,7 @@ export default function TabsLayout() {
         headerTitleStyle: { color: colors.textPrimary, fontWeight: '700' },
         tabBarActiveTintColor: colors.accentText,
         tabBarInactiveTintColor: colors.textMuted,
-        // En enda flik tills Agenda läggs till – dölj flikraden så länge
-        tabBarStyle: { display: 'none' },
+        tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
       }}
     >
       <Tabs.Screen
@@ -41,6 +40,13 @@ export default function TabsLayout() {
         options={{
           title: 'Påminnelser',
           tabBarIcon: ({ color, size }) => <Icon name="list" size={size} color={color} />,
+        }}
+      />
+      <Tabs.Screen
+        name="agenda"
+        options={{
+          title: 'Agenda',
+          tabBarIcon: ({ color, size }) => <Icon name="calendar-outline" size={size} color={color} />,
         }}
       />
     </Tabs>

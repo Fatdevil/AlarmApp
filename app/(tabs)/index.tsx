@@ -1,29 +1,20 @@
 import * as Haptics from 'expo-haptics';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, SectionList, Text, View } from 'react-native';
 import { AlarmCard } from '../../src/components/AlarmCard';
 import { PermissionBanner } from '../../src/components/PermissionBanner';
 import { Button, Icon } from '../../src/components/ui';
 import { useSnackbar } from '../../src/components/UndoSnackbar';
-import { buildSections, SectionKey } from '../../src/logic/sections';
+import { AlarmSection, buildSections, SectionKey } from '../../src/logic/sections';
 import { completeAlarm, removeAlarm, restoreAlarm } from '../../src/services/alarms';
 import { toggleChecklistItem } from '../../src/services/db';
 import { usePermissions } from '../../src/services/permissions';
 import { acceptFriendAlarm, declineFriendAlarm } from '../../src/services/pushSync';
 import { useAlarms } from '../../src/state/useAlarms';
+import { useNow } from '../../src/state/useNow';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../../src/theme';
 import { LocalAlarm } from '../../src/types';
-
-/** "Nu" som uppdateras varje halvminut, så att nedräkningar och sektioner hålls aktuella. */
-function useNow(intervalMs = 30_000): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
 
 export default function RemindersScreen() {
   const styles = useStyles();
@@ -33,17 +24,20 @@ export default function RemindersScreen() {
   const alarms = useAlarms();
   const now = useNow();
   const { permissions, refresh: refreshPermissions } = usePermissions();
-  const { focus } = useLocalSearchParams<{ focus?: string }>();
+  const { focus, at } = useLocalSearchParams<{ focus?: string; at?: string }>();
   const [showDone, setShowDone] = useState(false);
-  // Larm som öppnats via en notis lyfts fram i några sekunder
-  const [dismissedFocus, setDismissedFocus] = useState<string | null>(null);
-  const highlighted = focus && focus !== dismissedFocus ? focus : null;
+  const listRef = useRef<SectionList<LocalAlarm, AlarmSection & { count: number }>>(null);
+  // Larm som öppnats via en notis eller agendan lyfts fram i några sekunder. [at] skiljer
+  // två tryck på samma larm åt, så att det lyfts fram igen.
+  const focusToken = focus ? `${focus}@${at ?? ''}` : null;
+  const [dismissedToken, setDismissedToken] = useState<string | null>(null);
+  const highlighted = focusToken && focusToken !== dismissedToken ? focus : null;
 
   useEffect(() => {
-    if (!focus) return;
-    const id = setTimeout(() => setDismissedFocus(focus), 4000);
+    if (!focusToken) return;
+    const id = setTimeout(() => setDismissedToken(focusToken), 4000);
     return () => clearTimeout(id);
-  }, [focus]);
+  }, [focusToken]);
 
   const sections = useMemo(
     () =>
@@ -52,6 +46,17 @@ export default function RemindersScreen() {
       ),
     [alarms, now, showDone]
   );
+
+  // Scrolla fram det framlyfta larmet (en gång per tryck)
+  const scrolledToken = useRef<string | null>(null);
+  useEffect(() => {
+    if (!highlighted || scrolledToken.current === focusToken) return;
+    const sectionIndex = sections.findIndex((s) => s.data.some((a) => a.id === highlighted));
+    if (sectionIndex < 0) return;
+    scrolledToken.current = focusToken;
+    const itemIndex = sections[sectionIndex].data.findIndex((a) => a.id === highlighted);
+    listRef.current?.scrollToLocation({ sectionIndex, itemIndex, viewOffset: 80, animated: true });
+  }, [highlighted, focusToken, sections]);
 
   const runWithUndo = async (
     action: (id: string) => Promise<LocalAlarm | null>,
@@ -90,6 +95,12 @@ export default function RemindersScreen() {
     <View style={styles.screen}>
 
       <SectionList
+        ref={listRef}
+        onScrollToIndexFailed={(info) =>
+          listRef.current
+            ?.getScrollResponder()
+            ?.scrollTo({ y: info.index * info.averageItemLength, animated: true })
+        }
         contentInsetAdjustmentBehavior="automatic"
         sections={sections}
         keyExtractor={(item) => item.id}

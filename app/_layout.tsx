@@ -36,7 +36,7 @@ async function routeFromResponse(response: Notifications.NotificationResponse): 
   Notifications.clearLastNotificationResponse();
   if (outcome.error) Alert.alert('Kunde inte utföra åtgärden', outcome.error);
   if (outcome.focusAlarmId) {
-    router.navigate({ pathname: '/', params: { focus: outcome.focusAlarmId } });
+    router.navigate({ pathname: '/', params: { focus: outcome.focusAlarmId, at: String(Date.now()) } });
   }
 }
 

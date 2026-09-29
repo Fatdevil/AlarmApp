@@ -1,7 +1,7 @@
 import DateTimePicker, { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import * as Haptics from 'expo-haptics';
 import * as Location from 'expo-location';
-import { Stack, useRouter } from 'expo-router';
+import { Stack, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
@@ -21,12 +21,15 @@ import {
   GEOFENCE_RADIUS_OPTIONS,
   MAX_CONTENT_LENGTH,
 } from '../src/constants';
+import { suggestedTimeForDay } from '../src/logic/agenda';
 import { newId } from '../src/logic/ids';
 import {
   formatClock,
   formatCountdown,
   formatDayLabel,
+  isSameDay,
   REPEAT_LABELS,
+  repeatingStart,
   resolveSelection,
   TIME_PRESETS,
   TimeSelection,
@@ -63,7 +66,12 @@ export default function NewAlarmScreen() {
   const [triggerType, setTriggerType] = useState<TriggerType>('TIME');
 
   // Tid – valet sparas, datumet räknas ut vid sparning (inte vid öppning)
-  const [selection, setSelection] = useState<TimeSelection>(TIME_PRESETS[1].selection);
+  // Från agendan: förvald dag (YYYY-MM-DD) kl. 09:00
+  const { date: dayParam } = useLocalSearchParams<{ date?: string }>();
+  const [selection, setSelection] = useState<TimeSelection>(() => {
+    const suggested = suggestedTimeForDay(dayParam);
+    return suggested ? { kind: 'custom', date: suggested } : TIME_PRESETS[1].selection;
+  });
   const [repeat, setRepeat] = useState<RepeatRule>('NONE');
   const [showIosPicker, setShowIosPicker] = useState(false);
   const [now, setNow] = useState(() => new Date());
@@ -85,7 +93,10 @@ export default function NewAlarmScreen() {
     return () => clearInterval(id);
   }, []);
 
-  const preview = resolveSelection(selection, now);
+  const chosen = resolveSelection(selection, now);
+  // Upprepade larm börjar alltid vid nästa tillfälle av klockslaget (se repeatingStart)
+  const preview = repeat === 'NONE' ? chosen : repeatingStart(chosen, repeat, now);
+  const laterStartIgnored = chosen.getTime() > preview.getTime() && !isSameDay(chosen, preview);
   const isCustom = selection.kind === 'custom';
 
   const openCustomPicker = () => {
@@ -189,11 +200,12 @@ export default function NewAlarmScreen() {
       let location: GeofenceLocation | null = null;
 
       if (triggerType === 'TIME') {
-        const date = resolveSelection(selection, saveNow);
-        if (repeat === 'NONE' && date.getTime() <= saveNow.getTime()) {
+        const chosen = resolveSelection(selection, saveNow);
+        if (repeat === 'NONE' && chosen.getTime() <= saveNow.getTime()) {
           Alert.alert('Tiden har passerat', 'Välj en tid i framtiden.');
           return;
         }
+        const date = repeat === 'NONE' ? chosen : repeatingStart(chosen, repeat, saveNow);
         dateTime = date.toISOString();
       } else {
         location = {
@@ -377,7 +389,9 @@ export default function NewAlarmScreen() {
               </View>
               {repeat !== 'NONE' && (
                 <Text style={styles.hint}>
-                  Ringer {repeat === 'DAILY' ? 'varje dag' : 'måndag–fredag'} kl. {formatClock(preview)}.
+                  Ringer {repeat === 'DAILY' ? 'varje dag' : 'måndag–fredag'} kl. {formatClock(preview)},
+                  första gången {formatDayLabel(preview, now).toLowerCase()}.
+                  {laterStartIgnored ? ' Upprepningar kan ännu inte börja ett senare datum.' : ''}
                 </Text>
               )}
             </View>
