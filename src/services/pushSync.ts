@@ -1,35 +1,25 @@
 /**
- * Vänlarm via push (Fas 5).
+ * Vänlarm – prototyp som endast nås från diagnostikvyn.
  *
- * Säkerhetsmodell:
+ * Integritetsreglerna finns i docs/PRIVACY.md. I korthet:
  * 1. Payloaden valideras strikt (logic/validation.ts) – okända fält ignoreras.
  * 2. Ett mottaget vänlarm sparas som PENDING_ACCEPTANCE. Ingen geofence registreras
- *    och inget ACK skickas förrän mottagaren aktivt godkänner det.
- * 3. ACK:et innehåller aldrig plats eller triggerstatus (Princip 5).
+ *    förrän mottagaren aktivt godkänner det.
+ * 3. Appen skickar ingenting tillbaka – inte heller att larmet godkänts eller registrerats.
  *
- * OBS: Avsändarens identitet kan inte verifieras på enheten ännu – det kräver
- * signerade payloads från en backend. Samtyckessteget är skyddet tills dess.
+ * Push tas inte emot i vanliga byggen: avsändarens identitet kan inte verifieras förrän
+ * det finns en backend med inloggning. En bakgrundstask från äldre versioner avregistreras.
  */
 import * as Notifications from 'expo-notifications';
 import * as TaskManager from 'expo-task-manager';
-import { SyncAckPayload } from '../types';
 import { validateIncomingAlarm } from '../logic/validation';
-import { validateAntiProbingAck } from './antiProbing';
 import { deleteAlarm, getAlarm, saveAlarm, updateAlarmStatus } from './db';
 import { logEvent } from './diagnostics';
 import { assertCanAddGeofence, syncGeofencesWithOs } from './geofence';
 import { presentFriendRequest } from './notifications';
 
-export const BACKGROUND_NOTIFICATION_TASK = 'ALARM_APP_BACKGROUND_NOTIFICATION_TASK';
-
-export type AckTransport = (ack: SyncAckPayload) => void;
-
-let ackTransport: AckTransport | null = null;
-
-/** Kopplar in hur ACK skickas (backend saknas i R0 – diagnostikvyn lyssnar här). */
-export function setAckTransport(transport: AckTransport | null): void {
-  ackTransport = transport;
-}
+/** Namnet på bakgrundstasken som äldre versioner registrerade för inkommande push. */
+export const LEGACY_PUSH_TASK = 'ALARM_APP_BACKGROUND_NOTIFICATION_TASK';
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -87,8 +77,8 @@ export async function handleIncomingPushPayload(raw: unknown): Promise<boolean> 
   return true;
 }
 
-/** Mottagaren godkänner: aktivera geofence och skicka strikt ACK. */
-export async function acceptFriendAlarm(alarmId: string): Promise<SyncAckPayload> {
+/** Mottagaren godkänner: aktivera geofence. Inget besked skickas någonstans. */
+export async function acceptFriendAlarm(alarmId: string): Promise<void> {
   const alarm = getAlarm(alarmId);
   if (!alarm || alarm.status !== 'PENDING_ACCEPTANCE') {
     throw new Error('Förfrågan finns inte längre.');
@@ -103,19 +93,6 @@ export async function acceptFriendAlarm(alarmId: string): Promise<SyncAckPayload
     updateAlarmStatus(alarm.id, 'PENDING_ACCEPTANCE');
     throw err;
   }
-
-  const ack: SyncAckPayload = {
-    alarmId: alarm.id,
-    status: 'REGISTERED_ON_DEVICE',
-    deviceTimestamp: new Date().toISOString(),
-  };
-  validateAntiProbingAck(ack);
-  ackTransport?.(ack);
-
-  await logEvent('PUSH_ACK_DISPATCHED', alarm.id, {
-    note: 'Strikt ACK: REGISTERED_ON_DEVICE (inga koordinater).',
-  });
-  return ack;
 }
 
 /** Mottagaren avböjer: raderas lokalt. Avsändaren får inget besked. */
@@ -124,30 +101,9 @@ export function declineFriendAlarm(alarmId: string): void {
   if (alarm?.status === 'PENDING_ACCEPTANCE') deleteAlarm(alarmId);
 }
 
-/**
- * Bakgrundstask för inkommande push (förgrund, bakgrund och avslutad app).
- * Ersätter addNotificationReceivedListener, som bara körs när appen är öppen.
- */
-TaskManager.defineTask<Notifications.NotificationTaskPayload>(
-  BACKGROUND_NOTIFICATION_TASK,
-  async ({ data, error }) => {
-    if (error || !data || 'actionIdentifier' in data) {
-      return Notifications.BackgroundNotificationTaskResult.NoData;
-    }
-    try {
-      const created = await handleIncomingPushPayload(data);
-      return created
-        ? Notifications.BackgroundNotificationTaskResult.NewData
-        : Notifications.BackgroundNotificationTaskResult.NoData;
-    } catch (err) {
-      console.warn('[PushSync] Fel i bakgrundstask:', err);
-      return Notifications.BackgroundNotificationTaskResult.Failed;
-    }
-  }
-);
-
-export async function registerBackgroundPushTask(): Promise<void> {
-  if (!(await TaskManager.isTaskRegisteredAsync(BACKGROUND_NOTIFICATION_TASK))) {
-    await Notifications.registerTaskAsync(BACKGROUND_NOTIFICATION_TASK);
+/** Tar bort push-tasken som äldre versioner registrerade, så att push inte längre tas emot. */
+export async function unregisterLegacyPushTask(): Promise<void> {
+  if (await TaskManager.isTaskRegisteredAsync(LEGACY_PUSH_TASK)) {
+    await Notifications.unregisterTaskAsync(LEGACY_PUSH_TASK);
   }
 }

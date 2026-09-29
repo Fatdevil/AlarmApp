@@ -1,22 +1,61 @@
-import { validateAntiProbingAck } from '../src/services/antiProbing';
 import { sanitizeDiagnosticLogs } from '../src/services/sanitizer';
 import { DiagnosticLogEntry } from '../src/types';
 
-describe('Princip 5: strikt ACK', () => {
-  const valid = { alarmId: 'a1', status: 'REGISTERED_ON_DEVICE', deviceTimestamp: 't' };
+/**
+ * docs/PRIVACY.md: appen har ingen server och skickar ingenting från telefonen.
+ * Testet fångar nätverksanrop och push-token som smyger sig in. När en backend byggs
+ * ändras testet medvetet – tillsammans med PRIVACY.md – så att bara de uttryckliga
+ * besluten Godkänt/Avvisat/Klar kan lämna telefonen.
+ */
+// Testet körs i Node; appens tsconfig saknar Node-typer, så bara det som används typas här.
+interface DirEntry {
+  name: string;
+  isDirectory(): boolean;
+}
+/* eslint-disable @typescript-eslint/no-require-imports */
+const fs: {
+  readdirSync(dir: string, opts: { withFileTypes: true }): DirEntry[];
+  readFileSync(file: string, encoding: 'utf8'): string;
+} = require('fs');
+const path: {
+  join(...parts: string[]): string;
+  relative(from: string, to: string): string;
+  resolve(...parts: string[]): string;
+} = require('path');
+/* eslint-enable @typescript-eslint/no-require-imports */
 
-  it('godkänner ett korrekt ACK', () => {
-    expect(validateAntiProbingAck(valid)).toBe(true);
+describe('Inget lämnar telefonen', () => {
+  const root = path.resolve('.');
+  const FORBIDDEN: [string, RegExp][] = [
+    ['fetch', /\bfetch\s*\(/],
+    ['XMLHttpRequest', /\bXMLHttpRequest\b/],
+    ['WebSocket', /\bWebSocket\b/],
+    ['EventSource', /\bEventSource\b/],
+    ['sendBeacon', /\bsendBeacon\b/],
+    ['push-token', /\bget(Expo|Device)PushTokenAsync\b/],
+    ['push-task', /\bregisterTaskAsync\b/],
+    ['URLSession', /\bURLSession\b/],
+    ['HttpURLConnection', /\b(Http)?URLConnection\b/],
+    ['OkHttp', /\bokhttp3?\b/i],
+  ];
+
+  function sourceFiles(dir: string): string[] {
+    return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) return /^(node_modules|build|test)$/.test(entry.name) ? [] : sourceFiles(full);
+      return /\.(ts|tsx|kt|swift)$/.test(entry.name) ? [full] : [];
+    });
+  }
+
+  const files = ['src', 'app', 'modules'].flatMap((d) => sourceFiles(path.join(root, d)));
+
+  it('hittar källfilerna', () => {
+    expect(files.length).toBeGreaterThan(20);
   });
 
-  it.each([
-    ['koordinater', { ...valid, latitude: 59.3, longitude: 18.0 }],
-    ['triggerstatus', { ...valid, status: 'FIRED' }],
-    ['okänt extrafält', { ...valid, lastSeen: 'x' }],
-    ['null', null],
-    ['array', []],
-  ])('avvisar ACK med %s', (_, ack) => {
-    expect(() => validateAntiProbingAck(ack)).toThrow(/PRINCIP 5/);
+  it.each(FORBIDDEN)('ingen källfil använder %s', (_, pattern) => {
+    const offenders = files.filter((f) => pattern.test(fs.readFileSync(f, 'utf8')));
+    expect(offenders.map((f) => path.relative(root, f))).toEqual([]);
   });
 });
 

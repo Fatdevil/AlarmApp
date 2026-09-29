@@ -13,12 +13,12 @@ import {
   readNotificationData,
   retryPendingAlarmCancellations,
 } from './notifications';
-import { acceptFriendAlarm, declineFriendAlarm, registerBackgroundPushTask } from './pushSync';
+import { acceptFriendAlarm, declineFriendAlarm, unregisterLegacyPushTask } from './pushSync';
 
 export async function initializeApp(): Promise<void> {
   const steps: [string, () => Promise<unknown>][] = [
     ['notiskanaler', initNotificationChannels],
-    ['push-task', registerBackgroundPushTask],
+    ['push-task', unregisterLegacyPushTask],
     ['avbokningar', retryPendingAlarmCancellations],
     ['tidslarm', () => reconcileScheduledAlarms()],
     ['geofences', syncGeofencesWithOs],
