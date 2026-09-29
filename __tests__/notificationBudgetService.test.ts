@@ -4,7 +4,7 @@ jest.mock('../src/services/db', () => ({
 }));
 jest.mock('../src/services/notifications', () => ({
   cancelReturningFailed: jest.fn(async () => []),
-  countScheduledNotifications: jest.fn(async () => 0),
+  getNotificationScheduleSummary: jest.fn(async () => ({ total: 0, snoozeIds: new Set<string>() })),
   getScheduledByAlarm: jest.fn(async () => new Map()),
   isNotificationBudgetLimited: jest.fn(async () => true),
   scheduleTimeAlarm: jest.fn(async () => ['ny']),
@@ -45,13 +45,18 @@ function fullSchedule() {
   return { alarms, inOs };
 }
 
+function summary(total: number, snoozeIds: string[] = []) {
+  m(notif.getNotificationScheduleSummary).mockResolvedValue({ total, snoozeIds: new Set(snoozeIds) });
+}
+
 beforeEach(() => {
   jest.clearAllMocks();
   m(notif.isNotificationBudgetLimited).mockResolvedValue(true);
-  m(notif.countScheduledNotifications).mockResolvedValue(0);
+  summary(0);
   m(notif.getScheduledByAlarm).mockResolvedValue(new Map());
   m(notif.cancelReturningFailed).mockResolvedValue([]);
   m(db.getAlarmsByStatus).mockReturnValue([]);
+  m(db.setNotificationIds).mockImplementation(() => {});
 });
 
 describe('rebalanceNotificationBudget', () => {
@@ -73,7 +78,7 @@ describe('rebalanceNotificationBudget', () => {
     const earlier = soon();
     m(db.getAlarmsByStatus).mockReturnValue([...alarms, earlier]);
     m(notif.getScheduledByAlarm).mockResolvedValue(inOs);
-    m(notif.countScheduledNotifications).mockResolvedValue(60);
+    summary(60);
 
     await expect(rebalanceNotificationBudget(now)).resolves.toEqual({ added: 1, removed: 1 });
     expect(notif.cancelReturningFailed).toHaveBeenCalledWith(['n60']);
@@ -87,7 +92,7 @@ describe('rebalanceNotificationBudget', () => {
 
   it('räknar med snoozar och andra notiser som tar plats', async () => {
     m(db.getAlarmsByStatus).mockReturnValue([alarm('väntar', 3)]);
-    m(notif.countScheduledNotifications).mockResolvedValue(60); // 60 notiser som inte hör till planen
+    summary(60); // 60 notiser som inte hör till planen
     await expect(rebalanceNotificationBudget(now)).resolves.toEqual({ added: 0, removed: 0 });
   });
 
@@ -102,11 +107,53 @@ describe('rebalanceNotificationBudget', () => {
     const { alarms, inOs } = fullSchedule();
     m(db.getAlarmsByStatus).mockReturnValue([...alarms, soon()]);
     m(notif.getScheduledByAlarm).mockResolvedValue(inOs);
-    m(notif.countScheduledNotifications).mockResolvedValue(60);
+    summary(60);
     m(notif.cancelReturningFailed).mockResolvedValueOnce(['n60']);
     const r = await rebalanceNotificationBudget(now);
     expect(r.removed).toBe(0);
     expect(db.setNotificationIds).toHaveBeenCalledWith('a60', ['n60']);
+  });
+});
+
+describe('snoozar och samtidighet', () => {
+  it('en snooze tas aldrig ut, även när larmet trängs ut', async () => {
+    const { alarms, inOs } = fullSchedule();
+    inOs.set('a60', ['n60', 'snooze-60']);
+    m(db.getAlarmsByStatus).mockReturnValue([...alarms, soon()]);
+    m(notif.getScheduledByAlarm).mockResolvedValue(inOs);
+    summary(61, ['snooze-60']);
+
+    await rebalanceNotificationBudget(now);
+    expect(notif.cancelReturningFailed).toHaveBeenCalledWith(['n60']);
+    expect(db.setNotificationIds).toHaveBeenCalledWith('a60', ['snooze-60']);
+  });
+
+  it('snoozar räknas som upptagna platser', async () => {
+    m(db.getAlarmsByStatus).mockReturnValue([alarm('väntar', 3)]);
+    summary(60, Array.from({ length: 60 }, (_, i) => `s${i}`));
+    await expect(rebalanceNotificationBudget(now)).resolves.toEqual({ added: 0, removed: 0 });
+  });
+
+  it('två samtidiga påfyllningar lägger inte in samma larm två gånger', async () => {
+    // Databasen speglar det som schemaläggs, som i appen
+    const waiting = alarm('väntar', 3);
+    m(db.getAlarmsByStatus).mockImplementation(() => [waiting]);
+    m(notif.getScheduledByAlarm).mockImplementation(async () =>
+      waiting.notificationIds?.length ? new Map([[waiting.id, waiting.notificationIds]]) : new Map()
+    );
+    m(db.setNotificationIds).mockImplementation((_, ids) => {
+      waiting.notificationIds = ids;
+    });
+
+    await Promise.all([rebalanceNotificationBudget(now), rebalanceNotificationBudget(now)]);
+    expect(notif.scheduleTimeAlarm).toHaveBeenCalledTimes(1);
+  });
+
+  it('ett fel i en påfyllning stoppar inte nästa', async () => {
+    m(notif.isNotificationBudgetLimited).mockRejectedValueOnce(new Error('iOS'));
+    m(db.getAlarmsByStatus).mockReturnValue([alarm('väntar', 3)]);
+    await expect(rebalanceNotificationBudget(now)).rejects.toThrow('iOS');
+    await expect(rebalanceNotificationBudget(now)).resolves.toEqual({ added: 1, removed: 0 });
   });
 });
 
@@ -115,7 +162,7 @@ describe('shouldDeferScheduling', () => {
     const { alarms, inOs } = fullSchedule();
     m(db.getAlarmsByStatus).mockReturnValue(alarms);
     m(notif.getScheduledByAlarm).mockResolvedValue(inOs);
-    m(notif.countScheduledNotifications).mockResolvedValue(60);
+    summary(60);
     await expect(shouldDeferScheduling(alarm('långt', 90), now)).resolves.toBe(true);
     await expect(shouldDeferScheduling(soon(), now)).resolves.toBe(false);
   });

@@ -132,8 +132,9 @@ export async function restoreAlarm(snapshot: LocalAlarm): Promise<void> {
       saveAlarm({ ...base, status: 'FIRED_LOCALLY' });
       return;
     }
-    const ids = await scheduleTimeAlarm(snapshot);
+    const ids = await scheduleOrDefer(snapshot);
     saveAlarm({ ...base, notificationIds: ids });
+    await refillSchedule();
     return;
   }
 
@@ -142,7 +143,7 @@ export async function restoreAlarm(snapshot: LocalAlarm): Promise<void> {
   const place = active && snapshot.location ? getPlace(snapshot.location.id) : null;
   // En uppföljning vars tid inte har kommit ska ringa vid tiden igen
   const timeIds =
-    active && hasTimeReminder(snapshot) && !isZoneArmed(snapshot) ? await scheduleTimeAlarm(snapshot) : [];
+    active && hasTimeReminder(snapshot) && !isZoneArmed(snapshot) ? await scheduleOrDefer(snapshot) : [];
   saveAlarm({ ...base, ...(place && { location: locationFromPlace(place) }), notificationIds: timeIds });
   if (active) {
     try {
@@ -153,6 +154,7 @@ export async function restoreAlarm(snapshot: LocalAlarm): Promise<void> {
       updateAlarmStatus(snapshot.id, 'CANCELLED');
       throw err;
     }
+    if (hasTimeReminder(snapshot)) await refillSchedule();
   }
 }
 

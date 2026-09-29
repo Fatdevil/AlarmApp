@@ -40,6 +40,8 @@ export type NotificationKind = 'ALARM' | 'FRIEND_REQUEST';
 export interface AlarmNotificationData extends Record<string, unknown> {
   kind: NotificationKind;
   alarmId: string;
+  /** Sant för en snooze – den ska aldrig tas ut av påfyllningen av notisschemat. */
+  snooze?: boolean;
 }
 
 // Visa notiser även när appen är i förgrunden
@@ -214,8 +216,9 @@ async function scheduleNotificationAlarm(alarm: LocalAlarm, first: Date, now: Da
 }
 
 export async function scheduleSnooze(alarm: LocalAlarm, now: Date = new Date()): Promise<string> {
+  const content = alarmContent(alarm, '⏰ Larm (snoozat)', true);
   return Notifications.scheduleNotificationAsync({
-    content: alarmContent(alarm, '⏰ Larm (snoozat)', true),
+    content: { ...content, data: { ...content.data, snooze: true } },
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DATE,
       date: new Date(now.getTime() + SNOOZE_MINUTES * 60_000),
@@ -300,9 +303,13 @@ export async function isNotificationBudgetLimited(): Promise<boolean> {
   return (await getNativeAlarmAuthorization()) !== 'authorized';
 }
 
-/** Antal notiser som ligger i telefonens schema just nu (alla slag). */
-export async function countScheduledNotifications(): Promise<number> {
-  return (await Notifications.getAllScheduledNotificationsAsync()).length;
+/** Telefonens notisschema just nu: antal notiser (alla slag) och ID:n som är snoozar. */
+export async function getNotificationScheduleSummary(): Promise<{ total: number; snoozeIds: Set<string> }> {
+  const requests = await Notifications.getAllScheduledNotificationsAsync();
+  const snoozeIds = new Set(
+    requests.filter((r) => r.content?.data?.snooze === true).map((r) => r.identifier)
+  );
+  return { total: requests.length, snoozeIds };
 }
 
 /** Avbryter allt appen har schemalagt: notiser och systemlarm (AlarmKit/AlarmManager). */

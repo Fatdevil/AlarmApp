@@ -340,6 +340,14 @@ describe('notisbudget (iOS utan AlarmKit)', () => {
     await expect(completeAlarm('alarm_1')).resolves.toBeTruthy();
   });
 
+  it('ångra ett larm som inte ryms sparar det som väntande', async () => {
+    m(budget.shouldDeferScheduling).mockResolvedValueOnce(true);
+    await restoreAlarm(alarm({ notificationIds: ['gammal'] }));
+    expect(notif.scheduleTimeAlarm).not.toHaveBeenCalled();
+    expect(db.saveAlarm).toHaveBeenCalledWith(expect.objectContaining({ notificationIds: [] }));
+    expect(budget.rebalanceNotificationBudget).toHaveBeenCalled();
+  });
+
   it('startkontrollen låter påfyllningen lägga in saknade larm', async () => {
     m(notif.isNotificationBudgetLimited).mockResolvedValueOnce(true);
     m(db.getAlarmsByStatus).mockImplementation((statuses) =>
