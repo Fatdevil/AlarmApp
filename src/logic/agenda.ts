@@ -5,6 +5,7 @@
  * närmaste dagarna – annars skulle ett dagligt larm fylla hela listan.
  */
 import { LocalAlarm } from '../types';
+import { hasTimeReminder, isZoneArmed } from './followUp';
 import { nextOccurrence } from './time';
 
 /** Så många dagar framåt som upprepade larm visas i listan. */
@@ -63,13 +64,15 @@ export function suggestedTimeForDay(key: string | undefined | null, now: Date = 
   return day;
 }
 
-function isUpcomingTimeAlarm(alarm: LocalAlarm): boolean {
-  return alarm.status === 'SCHEDULED' && alarm.triggerType === 'TIME' && !!alarm.dateTime;
+/** Ringer vid en tid framåt: schemalagda tidslarm och uppföljningar vars tid inte har kommit. */
+function isUpcomingTimeAlarm(alarm: LocalAlarm, now: Date): boolean {
+  if (alarm.status === 'SCHEDULED') return alarm.triggerType === 'TIME' && !!alarm.dateTime;
+  return alarm.status === 'ACTIVE_GEOFENCE' && hasTimeReminder(alarm) && !isZoneArmed(alarm, now);
 }
 
 /** Alla tillfällen ett schemalagt tidslarm ringer från och med [now] och före [until]. */
 export function occurrencesBefore(alarm: LocalAlarm, now: Date, until: Date): Date[] {
-  if (!isUpcomingTimeAlarm(alarm)) return [];
+  if (!isUpcomingTimeAlarm(alarm, now)) return [];
   const result: Date[] = [];
   let next = nextOccurrence(alarm.dateTime!, alarm.repeat, now);
   while (next && next.getTime() < until.getTime()) {
@@ -89,7 +92,7 @@ export function buildAgenda(
   const byDay = new Map<string, AgendaItem[]>();
 
   for (const alarm of alarms) {
-    if (!isUpcomingTimeAlarm(alarm)) continue;
+    if (!isUpcomingTimeAlarm(alarm, now)) continue;
     const repeating = (alarm.repeat ?? 'NONE') !== 'NONE';
     const times = repeating
       ? occurrencesBefore(alarm, now, repeatUntil)
@@ -109,7 +112,7 @@ export function buildAgenda(
     }));
 
   const places = alarms
-    .filter((a) => a.status === 'ACTIVE_GEOFENCE')
+    .filter((a) => a.status === 'ACTIVE_GEOFENCE' && isZoneArmed(a, now))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 
   return { places, days };

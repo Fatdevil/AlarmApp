@@ -2,6 +2,7 @@
  * Grupperar larm i sektioner för startsidan (ren logik, testas i __tests__/sections.test.ts).
  */
 import { LocalAlarm } from '../types';
+import { hasTimeReminder, isZoneArmed } from './followUp';
 import { isSameDay, nextOccurrence } from './time';
 
 export type SectionKey = 'requests' | 'attention' | 'today' | 'upcoming' | 'places' | 'done';
@@ -32,6 +33,8 @@ export function classifyAlarm(alarm: LocalAlarm, now: Date = new Date()): Sectio
     case 'CANCELLED':
       return 'done';
     case 'ACTIVE_GEOFENCE':
+      // En uppföljning vars tid inte har kommit visas vid sin tid, därefter bland platserna
+      if (!isZoneArmed(alarm, now)) return isSameDay(new Date(alarm.dateTime!), now) ? 'today' : 'upcoming';
       return 'places';
     case 'SCHEDULED': {
       if (alarm.triggerType !== 'TIME' || !alarm.dateTime) return 'places';
@@ -44,6 +47,7 @@ export function classifyAlarm(alarm: LocalAlarm, now: Date = new Date()): Sectio
 }
 
 function sortKey(alarm: LocalAlarm, now: Date): number {
+  if (hasTimeReminder(alarm) && !isZoneArmed(alarm, now)) return new Date(alarm.dateTime!).getTime();
   if (alarm.triggerType === 'TIME' && alarm.dateTime) {
     const next = nextOccurrence(alarm.dateTime, alarm.repeat, now);
     return (next ?? new Date(alarm.dateTime)).getTime();

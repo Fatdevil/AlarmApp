@@ -18,6 +18,7 @@ jest.mock('../src/services/db', () => ({
   findActiveAlarmsByLocationId: jest.fn(() => []),
   getAlarmsByStatus: jest.fn(() => []),
   updateAlarmStatus: jest.fn(),
+  setNotificationIds: jest.fn(),
   getRegionState: jest.fn((id: string) => mockRegionStates.get(id) ?? 'UNKNOWN'),
   setRegionState: jest.fn((id: string, s: string) => mockRegionStates.set(id, s)),
   clearRegionStates: jest.fn((ids: string[]) => ids.forEach((id) => mockRegionStates.delete(id))),
@@ -25,7 +26,10 @@ jest.mock('../src/services/db', () => ({
     for (const id of [...mockRegionStates.keys()]) if (!keep.includes(id)) mockRegionStates.delete(id);
   }),
 }));
-jest.mock('../src/services/notifications', () => ({ fireGeofenceNotification: jest.fn() }));
+jest.mock('../src/services/notifications', () => ({
+  fireGeofenceNotification: jest.fn(),
+  cancelNotificationsBestEffort: jest.fn(),
+}));
 jest.mock('../src/services/diagnostics', () => ({ logEvent: jest.fn() }));
 
 /* eslint-disable import/first */
@@ -129,6 +133,29 @@ describe('geofence-task: lägesbesked vs passage', () => {
     await event('exit');
     await event('enter');
     expect(notif.fireGeofenceNotification).toHaveBeenCalledTimes(1);
+  });
+
+  it('en uppföljning larmar inte före sin tid, men läget sparas', async () => {
+    const later = new Date(Date.now() + 3600_000).toISOString();
+    activeAlarms(locationAlarm('EXIT_LOCATION', { dateTime: later, notificationIds: ['n1'] }));
+    osHasRegions(home);
+
+    await event('enter'); // lägesbesked
+    await event('exit'); // lämnar före tiden
+    expect(notif.fireGeofenceNotification).not.toHaveBeenCalled();
+    expect(db.setRegionState).toHaveBeenLastCalledWith(home.id, 'OUTSIDE');
+  });
+
+  it('efter tiden larmar uppföljningen och avbokar en kvarvarande snooze', async () => {
+    const earlier = new Date(Date.now() - 60_000).toISOString();
+    activeAlarms(locationAlarm('EXIT_LOCATION', { dateTime: earlier, notificationIds: ['snooze-1'] }));
+    osHasRegions(home);
+
+    await event('enter');
+    await event('exit');
+    expect(notif.fireGeofenceNotification).toHaveBeenCalledTimes(1);
+    expect(notif.cancelNotificationsBestEffort).toHaveBeenCalledWith(['snooze-1']);
+    expect(db.setNotificationIds).toHaveBeenCalledWith('alarm_1', []);
   });
 
   it('sparar läget även när inga larm är aktiva för zonen', async () => {

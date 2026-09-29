@@ -9,6 +9,7 @@ import {
   scheduleNativeAlarm,
 } from '../../modules/native-alarm';
 import { SNOOZE_MINUTES } from '../constants';
+import { followUpLine } from '../logic/followUp';
 import { nextOccurrence, WEEKDAY_NUMBERS } from '../logic/time';
 import { LocalAlarm } from '../types';
 import {
@@ -93,11 +94,17 @@ export async function initNotificationChannels(): Promise<void> {
   ]);
 }
 
-function alarmContent(alarm: LocalAlarm, title: string): Notifications.NotificationContentInput {
+function alarmContent(
+  alarm: LocalAlarm,
+  title: string,
+  isTimeReminder = false
+): Notifications.NotificationContentInput {
   const data: AlarmNotificationData = { kind: 'ALARM', alarmId: alarm.id };
+  // En uppföljning berättar vad som händer sedan och att "Klar" stänger båda
+  const followUp = isTimeReminder && alarm.status === 'ACTIVE_GEOFENCE' ? followUpLine(alarm) : null;
   return {
     title,
-    body: alarm.content,
+    body: followUp ? `${alarm.content}\n${followUp} ("Klar" stänger båda)` : alarm.content,
     // iOS: ringsignalen är längre och tydligare än standardljudet
     sound: Platform.OS === 'ios' ? 'defaultRingtone' : true,
     priority: Notifications.AndroidNotificationPriority.MAX,
@@ -152,7 +159,7 @@ export async function scheduleTimeAlarm(alarm: LocalAlarm, now: Date = new Date(
 
 async function scheduleNotificationAlarm(alarm: LocalAlarm, first: Date, now: Date): Promise<string[]> {
   const repeat = alarm.repeat ?? 'NONE';
-  const content = alarmContent(alarm, '⏰ Larm');
+  const content = alarmContent(alarm, '⏰ Larm', true);
   const hour = first.getHours();
   const minute = first.getMinutes();
 
@@ -208,7 +215,7 @@ async function scheduleNotificationAlarm(alarm: LocalAlarm, first: Date, now: Da
 
 export async function scheduleSnooze(alarm: LocalAlarm, now: Date = new Date()): Promise<string> {
   return Notifications.scheduleNotificationAsync({
-    content: alarmContent(alarm, '⏰ Larm (snoozat)'),
+    content: alarmContent(alarm, '⏰ Larm (snoozat)', true),
     trigger: {
       type: Notifications.SchedulableTriggerInputTypes.DATE,
       date: new Date(now.getTime() + SNOOZE_MINUTES * 60_000),

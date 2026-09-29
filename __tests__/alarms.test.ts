@@ -33,6 +33,7 @@ import {
   reconcileScheduledAlarms,
   removeAlarm,
   restoreAlarm,
+  snoozeAlarm,
 } from '../src/services/alarms';
 /* eslint-enable import/first */
 
@@ -58,7 +59,11 @@ function alarm(overrides: Partial<LocalAlarm> = {}): LocalAlarm {
 
 const place = { id: 'loc_1', name: 'Hem', latitude: 59, longitude: 18, radius: 150 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  // clearAllMocks behåller implementationer – nollställ den som tester byter ut
+  m(db.getAlarmsByStatus).mockImplementation(() => []);
+});
 
 describe('createAlarm (tid)', () => {
   it('schemalägger i OS först och sparar sedan med notis-ID:n', async () => {
@@ -192,6 +197,76 @@ describe('reconcileScheduledAlarms', () => {
   });
 });
 
+describe('uppföljning vid plats (tid → plats)', () => {
+  const followUp = () =>
+    alarm({ triggerType: 'EXIT_LOCATION', dateTime: future, location: place, status: 'ACTIVE_GEOFENCE' });
+
+  it('schemalägger tidspåminnelsen och registrerar zonen direkt', async () => {
+    m(notif.scheduleTimeAlarm).mockResolvedValue(['n1']);
+    const saved = await createAlarm(followUp());
+    expect(notif.scheduleTimeAlarm).toHaveBeenCalledWith(expect.objectContaining({ repeat: 'NONE' }));
+    expect(saved).toMatchObject({ status: 'ACTIVE_GEOFENCE', notificationIds: ['n1'] });
+    expect(geo.syncGeofencesWithOs).toHaveBeenCalled();
+  });
+
+  it('avbokar tidspåminnelsen och raderar larmet om zonen inte kan registreras', async () => {
+    m(notif.scheduleTimeAlarm).mockResolvedValue(['n1']);
+    m(geo.syncGeofencesWithOs)
+      .mockRejectedValueOnce(new Error('Tillåt alltid'))
+      .mockResolvedValueOnce(0);
+    await expect(createAlarm(followUp())).rejects.toThrow('Tillåt alltid');
+    expect(db.deleteAlarm).toHaveBeenCalledWith('alarm_1');
+    expect(notif.cancelNotificationsBestEffort).toHaveBeenCalledWith(['n1']);
+  });
+
+  it('sparar ingenting om tidspåminnelsen inte kan schemaläggas', async () => {
+    m(notif.scheduleTimeAlarm).mockRejectedValueOnce(new Error('Tiden har redan passerat'));
+    await expect(createAlarm(followUp())).rejects.toThrow('passerat');
+    expect(db.saveAlarm).not.toHaveBeenCalled();
+  });
+
+  it('"Klar" i tidslarmet stänger både tid och plats', async () => {
+    m(db.getAlarm).mockReturnValue({ ...followUp(), notificationIds: ['n1'] });
+    await acknowledgeAlarm('alarm_1');
+    expect(notif.cancelNotifications).toHaveBeenCalledWith(['n1']);
+    expect(db.updateAlarmStatus).toHaveBeenCalledWith('alarm_1', 'DONE', expect.any(String));
+    expect(geo.syncGeofencesWithOs).toHaveBeenCalled();
+  });
+
+  it('ångra före tiden schemalägger tidspåminnelsen igen', async () => {
+    m(notif.scheduleTimeAlarm).mockResolvedValue(['n2']);
+    await restoreAlarm(followUp());
+    expect(db.saveAlarm).toHaveBeenCalledWith(expect.objectContaining({ notificationIds: ['n2'] }));
+  });
+
+  it('startkontrollen schemalägger om en saknad tidspåminnelse', async () => {
+    m(db.getAlarmsByStatus).mockImplementation((statuses) =>
+      statuses.includes('ACTIVE_GEOFENCE') ? [{ ...followUp(), notificationIds: ['borta'] }] : []
+    );
+    m(notif.getScheduledByAlarm).mockResolvedValueOnce(new Map());
+    m(notif.scheduleTimeAlarm).mockResolvedValue(['n3']);
+    const r = await reconcileScheduledAlarms();
+    expect(r.rescheduled).toBe(1);
+    expect(db.setNotificationIds).toHaveBeenCalledWith('alarm_1', ['n3']);
+    expect(db.updateAlarmStatus).not.toHaveBeenCalled();
+  });
+
+  it('startkontrollen rör inte en uppföljning vars tid har passerat', async () => {
+    m(db.getAlarmsByStatus).mockImplementation((statuses) =>
+      statuses.includes('ACTIVE_GEOFENCE') ? [{ ...followUp(), dateTime: past }] : []
+    );
+    await reconcileScheduledAlarms();
+    expect(notif.scheduleTimeAlarm).not.toHaveBeenCalled();
+    expect(db.updateAlarmStatus).not.toHaveBeenCalled();
+  });
+
+  it('ångra efter tiden återställer bara zonen', async () => {
+    await restoreAlarm({ ...followUp(), dateTime: past });
+    expect(notif.scheduleTimeAlarm).not.toHaveBeenCalled();
+    expect(db.saveAlarm).toHaveBeenCalledWith(expect.objectContaining({ notificationIds: [] }));
+  });
+});
+
 describe('acknowledgeAlarm ("Klar" i notisen)', () => {
   it('stoppar inte ett upprepat larm', async () => {
     m(db.getAlarm).mockReturnValue(alarm({ repeat: 'DAILY', notificationIds: ['n1'] }));
@@ -204,5 +279,34 @@ describe('acknowledgeAlarm ("Klar" i notisen)', () => {
     m(db.getAlarm).mockReturnValue(alarm({ notificationIds: ['n1'] }));
     await acknowledgeAlarm('alarm_1');
     expect(db.updateAlarmStatus).toHaveBeenCalledWith('alarm_1', 'DONE', expect.any(String));
+  });
+});
+
+describe('snoozeAlarm', () => {
+  it('ett tidslarm som har ringt blir schemalagt igen', async () => {
+    m(db.getAlarm).mockReturnValue(alarm({ status: 'FIRED_LOCALLY' }));
+    m(notif.scheduleSnooze).mockResolvedValue('s1');
+    await snoozeAlarm('alarm_1');
+    expect(db.updateAlarmStatus).toHaveBeenCalledWith('alarm_1', 'SCHEDULED');
+  });
+
+  it('ett platslarm som har larmat förblir "har ringt"', async () => {
+    m(db.getAlarm).mockReturnValue(
+      alarm({ triggerType: 'EXIT_LOCATION', location: place, dateTime: null, status: 'FIRED_LOCALLY' })
+    );
+    m(notif.scheduleSnooze).mockResolvedValue('s1');
+    await snoozeAlarm('alarm_1');
+    expect(db.setNotificationIds).toHaveBeenCalledWith('alarm_1', ['s1']);
+    expect(db.updateAlarmStatus).not.toHaveBeenCalled();
+  });
+
+  it('snooze av tidspåminnelsen i en uppföljning låter zonen vara aktiv', async () => {
+    m(db.getAlarm).mockReturnValue(
+      alarm({ triggerType: 'EXIT_LOCATION', location: place, status: 'ACTIVE_GEOFENCE', notificationIds: ['n1'] })
+    );
+    m(notif.scheduleSnooze).mockResolvedValue('s1');
+    await snoozeAlarm('alarm_1');
+    expect(db.setNotificationIds).toHaveBeenCalledWith('alarm_1', ['n1', 's1']);
+    expect(db.updateAlarmStatus).not.toHaveBeenCalled();
   });
 });

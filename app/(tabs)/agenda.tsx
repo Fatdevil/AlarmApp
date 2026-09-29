@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router';
 import React, { useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, SectionList, Text, View } from 'react-native';
 import { Button, Icon } from '../../src/components/ui';
+import { followUpLine } from '../../src/logic/followUp';
 import { addDays, AgendaItem, buildAgenda, dayKey, parseDayKey } from '../../src/logic/agenda';
 import { formatAgendaDay, formatClock, LOCALE, REPEAT_LABELS } from '../../src/logic/time';
 import { useAlarms } from '../../src/state/useAlarms';
@@ -155,10 +156,13 @@ export default function AgendaScreen() {
 
     const { alarm, at } = row.item;
     const repeating = alarm.repeat && alarm.repeat !== 'NONE';
+    const followUp = followUpLine(alarm);
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={`${formatClock(at)}, ${alarm.content}${repeating ? `, ${REPEAT_LABELS[alarm.repeat!]}` : ''}`}
+        accessibilityLabel={[formatClock(at), alarm.content, repeating && REPEAT_LABELS[alarm.repeat!], followUp]
+          .filter(Boolean)
+          .join(', ')}
         onPress={() => openAlarm(alarm)}
         style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
       >
@@ -173,6 +177,16 @@ export default function AgendaScreen() {
             <View style={styles.repeat}>
               <Icon name="repeat" size={14} color={colors.textMuted} />
               <Text style={styles.rowMeta}>{REPEAT_LABELS[alarm.repeat!]}</Text>
+            </View>
+          )}
+          {followUp && (
+            <View style={styles.repeat}>
+              <Icon
+                name={alarm.triggerType === 'ENTER_LOCATION' ? 'enter-outline' : 'exit-outline'}
+                size={14}
+                color={colors.textMuted}
+              />
+              <Text style={styles.rowMeta}>{followUp}</Text>
             </View>
           )}
         </View>

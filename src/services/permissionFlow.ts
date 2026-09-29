@@ -28,13 +28,20 @@ export function showSettingsAlert(title: string, message: string) {
   ]);
 }
 
-/** TIME: tidspåminnelser, som ringer som systemlarm när det är tillåtet. */
-export async function ensurePermissions(triggerType: TriggerType): Promise<boolean> {
+/**
+ * Ber om det som behövs för larmet. [withTime]: larmet ringer vid en tid (som systemlarm
+ * när det är tillåtet) – sant för tidslarm och för platslarm med uppföljning (tid → plats),
+ * som då behöver både larm- och platsbehörighet.
+ */
+export async function ensurePermissions(
+  triggerType: TriggerType,
+  withTime: boolean = triggerType === 'TIME'
+): Promise<boolean> {
   const perms = await getPermissionSnapshot();
 
   // iOS 26+: riktiga systemlarm (AlarmKit). Nekas det faller vi tillbaka till notiser.
   let systemAlarms = perms.systemAlarms;
-  if (triggerType === 'TIME' && systemAlarms === 'undetermined') {
+  if (withTime && systemAlarms === 'undetermined') {
     const ok = await confirm(
       'Tillåt larm',
       'Då ringer larmet som en väckarklocka – även i tyst läge och med Fokus på.',
