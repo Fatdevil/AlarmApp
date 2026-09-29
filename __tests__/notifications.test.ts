@@ -150,6 +150,21 @@ describe('scheduleTimeAlarm', () => {
     expect(Native.scheduleNativeAlarm).not.toHaveBeenCalled();
   });
 
+  it('en uppföljning berättar i notisen vad som händer sedan', async () => {
+    (Native.getNativeAlarmAuthorization as jest.Mock).mockResolvedValueOnce('unavailable');
+    const place = { id: 'place_jobb', name: 'Jobbet', latitude: 59, longitude: 18, radius: 150 };
+    await scheduleTimeAlarm(
+      alarm({ triggerType: 'EXIT_LOCATION', location: place, status: 'ACTIVE_GEOFENCE' })
+    );
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({
+          body: 'Väckning\nSedan: när du lämnar Jobbet ("Klar" stänger båda)',
+        }),
+      })
+    );
+  });
+
   it('faller tillbaka till notis om systemlarmet misslyckas', async () => {
     (Native.scheduleNativeAlarm as jest.Mock).mockRejectedValueOnce(new Error('nej'));
     await expect(scheduleTimeAlarm(alarm())).resolves.toEqual(['notif-1']);

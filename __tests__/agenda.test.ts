@@ -94,6 +94,24 @@ describe('buildAgenda', () => {
   });
 });
 
+describe('uppföljning vid plats i agendan', () => {
+  const followUp = (at: Date): LocalAlarm => ({
+    ...place,
+    id: 'uppföljning',
+    dateTime: at.toISOString(),
+  });
+
+  it('visas på sin dag före tiden och under platser efter', () => {
+    const before = buildAgenda([followUp(new Date(2026, 8, 25, 16, 0))], wed);
+    expect(before.days.map((d) => d.key)).toEqual(['2026-09-25']);
+    expect(before.places).toEqual([]);
+
+    const after = buildAgenda([followUp(new Date(2026, 8, 23, 9, 0))], wed);
+    expect(after.days).toEqual([]);
+    expect(after.places.map((a) => a.id)).toEqual(['uppföljning']);
+  });
+});
+
 describe('occurrencesBefore', () => {
   it('ger ett engångslarm en gång och inget efter gränsen', () => {
     const once = timeAlarm('en', new Date(2026, 8, 24, 9, 0));

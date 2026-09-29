@@ -64,7 +64,10 @@ väckarklocka (den togs bort för att fokusera på det som skiljer appen från K
 
 Agendan visar kommande påminnelser dag för dag, även långt fram i tiden. Sparade platser
 (Inställningar → Mina platser) kan väljas direkt i "Nytt larm"; larm på samma plats delar en zon.
-Planerad ordning härnäst: "tid → följ upp vid plats" → påfyllning av iOS-notiser (som också gör
+En tidspåminnelse kan följas upp vid en sparad plats ("Följ upp vid plats"): den ringer vid
+tiden och påminner sedan igen när du lämnar eller kommer till platsen. "Klar" stänger båda;
+snooza eller stäng av tidslarmet för att låta platsen fortsätta bevakas. Zonen registreras
+direkt men larmar först efter tiden. Planerat härnäst: påfyllning av iOS-notiser (som också gör
 det möjligt för upprepade påminnelser att börja ett senare datum). Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
 enhetstesterna nedan och kräver en server med inloggning.
 
@@ -101,4 +104,7 @@ Om modulen saknas eller behörighet nekas används `expo-notifications` automati
 - [ ] Två larm på "Jobbet" → båda larmar när du lämnar jobbet
 - [ ] Flytta "Jobbet" med ett aktivt larm → larmet följer med och larmar inte direkt av omregistreringen
 - [ ] Ta bort en plats som används → larmet finns kvar och fungerar
+- [ ] Tid → plats: "Köp blommor" kl. 16 + "När jag lämnar Jobbet" → ringer 16:00; lämnar du jobbet efteråt kommer en påminnelse till
+- [ ] Tid → plats: lämna jobbet före 16:00 → ingen platspåminnelse då; tidslarmet ringer 16:00 som vanligt
+- [ ] Tid → plats: tryck "Klar" i tidslarmet → ingen platspåminnelse senare
 - [ ] Agenda: ett dagligt larm syns varje dag de närmaste två veckorna; platslarm under "Väntar på plats"

@@ -3,6 +3,7 @@
  * Varje operation är "allt eller inget": misslyckas OS-delen rullas databasen tillbaka.
  */
 import { LocalAlarm } from '../types';
+import { hasTimeReminder, isZoneArmed } from '../logic/followUp';
 import { locationFromPlace } from '../logic/places';
 import { nextOccurrence } from '../logic/time';
 import {
@@ -43,14 +44,22 @@ export async function createAlarm(alarm: LocalAlarm): Promise<LocalAlarm> {
     return saved;
   }
 
-  const saved: LocalAlarm = { ...alarm, status: 'ACTIVE_GEOFENCE' };
-  assertCanAddGeofence(saved);
-  saveAlarm(saved);
+  assertCanAddGeofence(alarm);
+  // Uppföljning vid plats: tidspåminnelsen schemaläggs först (se logic/followUp.ts)
+  const notificationIds = hasTimeReminder(alarm) ? await scheduleTimeAlarm({ ...alarm, repeat: 'NONE' }) : [];
+  const saved: LocalAlarm = { ...alarm, status: 'ACTIVE_GEOFENCE', repeat: 'NONE', notificationIds };
+  try {
+    saveAlarm(saved);
+  } catch (err) {
+    await cancelNotificationsBestEffort(notificationIds);
+    throw err;
+  }
   try {
     await syncGeofencesWithOs();
   } catch (err) {
     dbDeleteAlarm(saved.id);
     await syncGeofencesWithOs().catch(() => {});
+    await cancelNotificationsBestEffort(notificationIds);
     throw err;
   }
   await logEvent('GEOFENCE_REGISTERED', saved.location!.id, {
@@ -109,12 +118,18 @@ export async function restoreAlarm(snapshot: LocalAlarm): Promise<void> {
   }
 
   // Platsen kan ha flyttats sedan ögonblicksbilden togs – använd den sparade platsen
-  const place = snapshot.status === 'ACTIVE_GEOFENCE' && snapshot.location ? getPlace(snapshot.location.id) : null;
-  saveAlarm(place ? { ...base, location: locationFromPlace(place) } : base);
-  if (snapshot.status === 'ACTIVE_GEOFENCE') {
+  const active = snapshot.status === 'ACTIVE_GEOFENCE';
+  const place = active && snapshot.location ? getPlace(snapshot.location.id) : null;
+  // En uppföljning vars tid inte har kommit ska ringa vid tiden igen
+  const timeIds =
+    active && hasTimeReminder(snapshot) && !isZoneArmed(snapshot) ? await scheduleTimeAlarm(snapshot) : [];
+  saveAlarm({ ...base, ...(place && { location: locationFromPlace(place) }), notificationIds: timeIds });
+  if (active) {
     try {
       await syncGeofencesWithOs();
     } catch (err) {
+      await cancelNotificationsBestEffort(timeIds);
+      setNotificationIds(snapshot.id, []);
       updateAlarmStatus(snapshot.id, 'CANCELLED');
       throw err;
     }
@@ -137,7 +152,8 @@ export async function snoozeAlarm(alarmId: string): Promise<void> {
   if (!alarm) return;
   const id = await scheduleSnooze(alarm);
   setNotificationIds(alarm.id, [...(alarm.notificationIds ?? []), id]);
-  if (alarm.status === 'FIRED_LOCALLY' || alarm.status === 'MISSED') {
+  // Ett platslarm som redan har larmat förblir "har ringt"; bara tidslarm schemaläggs igen
+  if (alarm.triggerType === 'TIME' && (alarm.status === 'FIRED_LOCALLY' || alarm.status === 'MISSED')) {
     updateAlarmStatus(alarm.id, 'SCHEDULED');
   }
 }

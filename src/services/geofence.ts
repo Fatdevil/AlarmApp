@@ -2,6 +2,7 @@ import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
 import { Platform } from 'react-native';
 import { IOS_MAX_GEOFENCES, MIN_GEOFENCE_RADIUS_METERS } from '../constants';
+import { isZoneArmed } from '../logic/followUp';
 import { isTriggeringTransition, RegionDefinition, sameRegions } from '../logic/regionState';
 import { GeofenceLocation, LocalAlarm } from '../types';
 import {
@@ -10,11 +11,12 @@ import {
   getAlarmsByStatus,
   getRegionState,
   pruneRegionStates,
+  setNotificationIds,
   setRegionState,
   updateAlarmStatus,
 } from './db';
 import { logEvent } from './diagnostics';
-import { fireGeofenceNotification } from './notifications';
+import { cancelNotificationsBestEffort, fireGeofenceNotification } from './notifications';
 
 export const GEOFENCE_BACKGROUND_TASK = 'ALARM_APP_GEOFENCE_TASK';
 
@@ -54,13 +56,22 @@ TaskManager.defineTask<GeofenceTaskData>(GEOFENCE_BACKGROUND_TASK, async ({ data
     await syncGeofencesWithOs().catch((err) => console.warn('[GeofenceTask] Synk:', err));
     return;
   }
-  // Lägesbesked (efter registrering/omstart), dubbletter och fel riktning larmar inte
-  const due = alarms.filter((a) => isTriggeringTransition(previous, observed, a.triggerType));
+  // Lägesbesked (efter registrering/omstart), dubbletter, fel riktning och uppföljningar
+  // vars tid inte har kommit än larmar inte
+  const now = new Date();
+  const due = alarms.filter(
+    (a) => isZoneArmed(a, now) && isTriggeringTransition(previous, observed, a.triggerType)
+  );
   if (due.length === 0) return;
 
   for (const alarm of due) {
     await fireGeofenceNotification(alarm, isEnter);
     updateAlarmStatus(alarm.id, 'FIRED_LOCALLY');
+    // En uppföljning kan ha en snoozad tidspåminnelse kvar – platsen har redan larmat
+    if (alarm.notificationIds?.length) {
+      await cancelNotificationsBestEffort(alarm.notificationIds);
+      setNotificationIds(alarm.id, []);
+    }
   }
 
   // Avregistrera direkt: förhindrar upprepade larm och frigör iOS-platser

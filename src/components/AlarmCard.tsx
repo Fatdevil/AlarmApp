@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import ReanimatedSwipeable, {
   SwipeableMethods,
 } from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { followUpLine, hasTimeReminder, isZoneArmed } from '../logic/followUp';
 import { LocalAlarm } from '../types';
 import {
   formatClock,
@@ -43,6 +44,15 @@ function describe(alarm: LocalAlarm, now: Date): Headline {
     };
   }
   const place = alarm.location?.name ?? 'Plats';
+  // Uppföljning: först en tid, sedan platsen
+  if (hasTimeReminder(alarm) && !isZoneArmed(alarm, now)) {
+    const at = new Date(alarm.dateTime!);
+    return {
+      icon: 'alarm-outline',
+      title: formatClock(at),
+      subtitle: `${formatDayLabel(at, now)} · ${followUpLine(alarm)}`,
+    };
+  }
   return alarm.triggerType === 'ENTER_LOCATION'
     ? { icon: 'enter-outline', title: place, subtitle: 'När du kommer fram' }
     : { icon: 'exit-outline', title: place, subtitle: 'När du lämnar' };
@@ -61,6 +71,7 @@ function statusText(alarm: LocalAlarm, now: Date): string | null {
     case 'CANCELLED':
       return 'Avbrutet';
     case 'ACTIVE_GEOFENCE':
+      if (!isZoneArmed(alarm, now)) return `Ringer ${formatCountdown(new Date(alarm.dateTime!), now)}`;
       return `Aktivt · ${alarm.location?.radius ?? ''} m radie`;
     case 'SCHEDULED': {
       if (!alarm.dateTime) return null;

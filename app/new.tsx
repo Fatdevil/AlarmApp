@@ -69,6 +69,11 @@ export default function NewAlarmScreen() {
   const [place, setPlace] = useState<PickedPlace | null>(null);
   const [radius, setRadius] = useState<number>(DEFAULT_GEOFENCE_RADIUS_METERS);
   const [saveAsPlace, setSaveAsPlace] = useState(false);
+
+  // Tid → följ upp vid plats: efter tiden bevakas en sparad plats tills larmet är klart
+  const [followUpPlaceId, setFollowUpPlaceId] = useState<string | null>(null);
+  const followUpPlace = places.find((p) => p.id === followUpPlaceId) ?? null;
+  const [followUpType, setFollowUpType] = useState<'EXIT_LOCATION' | 'ENTER_LOCATION'>('EXIT_LOCATION');
   const [placeName, setPlaceName] = useState('');
 
   // Checklista
@@ -160,7 +165,9 @@ export default function NewAlarmScreen() {
     // En plats som sparas här tas bort igen om larmet inte kan skapas
     let createdPlaceId: string | null = null;
     try {
-      if (!(await ensurePermissions(triggerType))) return;
+      const withFollowUp = triggerType === 'TIME' && followUpPlace !== null;
+      const effectiveType: TriggerType = withFollowUp ? followUpType : triggerType;
+      if (!(await ensurePermissions(effectiveType, triggerType === 'TIME'))) return;
 
       const saveNow = new Date();
       let dateTime: string | null = null;
@@ -174,6 +181,7 @@ export default function NewAlarmScreen() {
         }
         const date = repeat === 'NONE' ? chosen : repeatingStart(chosen, repeat, saveNow);
         dateTime = date.toISOString();
+        if (followUpPlace) location = locationFromPlace(followUpPlace);
       } else if (savedPlace) {
         location = locationFromPlace(savedPlace);
       } else if (newPlaceInput) {
@@ -197,11 +205,11 @@ export default function NewAlarmScreen() {
         recipientId: 'ME',
         content: text,
         checklistItems: checklist.length ? checklist : undefined,
-        triggerType,
+        triggerType: effectiveType,
         dateTime,
-        repeat: triggerType === 'TIME' ? repeat : 'NONE',
+        repeat: effectiveType === 'TIME' ? repeat : 'NONE',
         location,
-        status: triggerType === 'TIME' ? 'SCHEDULED' : 'ACTIVE_GEOFENCE',
+        status: effectiveType === 'TIME' ? 'SCHEDULED' : 'ACTIVE_GEOFENCE',
         createdAt: saveNow.toISOString(),
       };
 
@@ -362,20 +370,74 @@ export default function NewAlarmScreen() {
             )}
 
             <View style={styles.section}>
-              <SectionLabel>Upprepa</SectionLabel>
-              <View style={styles.wrap} accessibilityRole="radiogroup">
-                {(Object.keys(REPEAT_LABELS) as RepeatRule[]).map((r) => (
-                  <Chip key={r} label={REPEAT_LABELS[r]} selected={repeat === r} onPress={() => setRepeat(r)} />
-                ))}
-              </View>
-              {repeat !== 'NONE' && (
+              <SectionLabel>Följ upp vid plats</SectionLabel>
+              {places.length === 0 ? (
                 <Text style={styles.hint}>
-                  Ringer {repeat === 'DAILY' ? 'varje dag' : 'måndag–fredag'} kl. {formatClock(preview)},
-                  första gången {formatDayLabel(preview, now).toLowerCase()}.
-                  {laterStartIgnored ? ' Upprepningar kan ännu inte börja ett senare datum.' : ''}
+                  Spara platser under Inställningar → Mina platser för att kunna bli påmind igen när
+                  du lämnar eller kommer till en plats efter tiden.
                 </Text>
+              ) : (
+                <>
+                  <View style={styles.wrap} accessibilityRole="radiogroup">
+                    <Chip label="Nej" selected={!followUpPlace} onPress={() => setFollowUpPlaceId(null)} />
+                    {places.map((p) => (
+                      <Chip
+                        key={p.id}
+                        label={p.name}
+                        icon="location-outline"
+                        selected={followUpPlaceId === p.id}
+                        onPress={() => {
+                          setFollowUpPlaceId(p.id);
+                          setRepeat('NONE');
+                        }}
+                      />
+                    ))}
+                  </View>
+                  {followUpPlace && (
+                    <>
+                      <View style={styles.wrap} accessibilityRole="radiogroup">
+                        <Chip
+                          label="När jag lämnar"
+                          icon="exit-outline"
+                          selected={followUpType === 'EXIT_LOCATION'}
+                          onPress={() => setFollowUpType('EXIT_LOCATION')}
+                        />
+                        <Chip
+                          label="När jag kommer fram"
+                          icon="enter-outline"
+                          selected={followUpType === 'ENTER_LOCATION'}
+                          onPress={() => setFollowUpType('ENTER_LOCATION')}
+                        />
+                      </View>
+                      <Text style={styles.hint}>
+                        Ringer {formatDayLabel(preview, now).toLowerCase()} kl. {formatClock(preview)}. Därefter
+                        påminns du {followUpType === 'EXIT_LOCATION' ? 'när du lämnar' : 'när du kommer till'}{' '}
+                        {followUpPlace.name}. ”Klar” stänger båda; ”Snooza” eller att stänga av tidslarmet låter
+                        platsen fortsätta bevakas.
+                      </Text>
+                    </>
+                  )}
+                </>
               )}
             </View>
+
+            {!followUpPlace && (
+              <View style={styles.section}>
+                <SectionLabel>Upprepa</SectionLabel>
+                <View style={styles.wrap} accessibilityRole="radiogroup">
+                  {(Object.keys(REPEAT_LABELS) as RepeatRule[]).map((r) => (
+                    <Chip key={r} label={REPEAT_LABELS[r]} selected={repeat === r} onPress={() => setRepeat(r)} />
+                  ))}
+                </View>
+                {repeat !== 'NONE' && (
+                  <Text style={styles.hint}>
+                    Ringer {repeat === 'DAILY' ? 'varje dag' : 'måndag–fredag'} kl. {formatClock(preview)},
+                    första gången {formatDayLabel(preview, now).toLowerCase()}.
+                    {laterStartIgnored ? ' Upprepningar kan ännu inte börja ett senare datum.' : ''}
+                  </Text>
+                )}
+              </View>
+            )}
           </>
         ) : (
           <>
