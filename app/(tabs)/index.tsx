@@ -12,18 +12,9 @@ import { toggleChecklistItem } from '../../src/services/db';
 import { usePermissions } from '../../src/services/permissions';
 import { acceptFriendAlarm, declineFriendAlarm } from '../../src/services/pushSync';
 import { useAlarms } from '../../src/state/useAlarms';
+import { useNow } from '../../src/state/useNow';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../../src/theme';
 import { LocalAlarm } from '../../src/types';
-
-/** "Nu" som uppdateras varje halvminut, så att nedräkningar och sektioner hålls aktuella. */
-function useNow(intervalMs = 30_000): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
 
 export default function RemindersScreen() {
   const styles = useStyles();
