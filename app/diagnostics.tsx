@@ -18,7 +18,7 @@ import {
   setSetting,
 } from '../src/services/db';
 import { getPermissionSnapshot, PermissionSnapshot } from '../src/services/permissions';
-import { handleIncomingPushPayload, setAckTransport } from '../src/services/pushSync';
+import { handleIncomingPushPayload } from '../src/services/pushSync';
 import { makeStyles, radii, spacing, typography } from '../src/theme';
 import { DiagnosticLogEntry } from '../src/types';
 
@@ -32,7 +32,6 @@ export default function DiagnosticsScreen() {
   const [battery, setBattery] = useState<BatterySnapshot | null>(null);
   const [perms, setPerms] = useState<PermissionSnapshot | null>(null);
   const [logs, setLogs] = useState<DiagnosticLogEntry[]>([]);
-  const [latestAck, setLatestAck] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
     Promise.all([getBatterySnapshot(), getPermissionSnapshot()])
@@ -46,14 +45,10 @@ export default function DiagnosticsScreen() {
 
   useEffect(() => {
     const initial = setTimeout(refresh, 0);
-    setAckTransport((ack) => {
-      setLatestAck(`${ack.alarmId.slice(0, 18)}… → ${ack.status} (${ack.deviceTimestamp})`);
-    });
     const id = setInterval(refresh, 10_000);
     return () => {
       clearTimeout(initial);
       clearInterval(id);
-      setAckTransport(null);
     };
   }, [refresh]);
 
@@ -146,7 +141,6 @@ export default function DiagnosticsScreen() {
           <Text style={styles.mono}>Notiser: {perms?.notifications ?? '–'}</Text>
           <Text style={styles.mono}>Plats (förgrund): {perms?.locationForeground ?? '–'}</Text>
           <Text style={styles.mono}>Plats (alltid): {perms?.locationBackground ?? '–'}</Text>
-          {latestAck && <Text style={styles.mono}>Senaste ACK: {latestAck}</Text>}
         </Card>
       </View>
 
@@ -158,7 +152,7 @@ export default function DiagnosticsScreen() {
           <Button compact variant="secondary" title="Larm +5 min" onPress={() => createTestAlarm(5)} />
         </View>
         <Button compact variant="secondary" title="Zon (EXIT) på min position" onPress={createGeofenceHere} />
-        <Button compact variant="secondary" title="Simulera vänlarm via push" onPress={simulateFriendPush} />
+        <Button compact variant="secondary" title="Simulera vänlarm (prototyp)" onPress={simulateFriendPush} />
         <Button
           compact
           variant="secondary"

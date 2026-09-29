@@ -49,17 +49,6 @@ export interface LocalAlarm {
 }
 
 /**
- * Strikt Anti-Probing ACK (Princip 5):
- * Servern/avsändaren får ENDAST veta att geofence är registrerat på enheten,
- * ALDRIG koordinater, gränspassager eller tidpunkter för när mottagaren passerar zonen.
- */
-export interface SyncAckPayload {
-  alarmId: string;
-  status: 'REGISTERED_ON_DEVICE';
-  deviceTimestamp: string;
-}
-
-/**
  * Diagnostiklogg för fälttest. Lagras ENBART lokalt i SQLite.
  */
 export type DiagnosticEventType =
@@ -71,7 +60,6 @@ export type DiagnosticEventType =
   | 'GEOFENCE_EXIT'
   | 'PUSH_SYNC_RECEIVED'
   | 'PUSH_SYNC_REJECTED'
-  | 'PUSH_ACK_DISPATCHED'
   | 'BOOT_RESTORE_TRIGGERED'
   | 'PERMISSION_CHANGED';
 

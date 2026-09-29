@@ -61,7 +61,13 @@ Diagnostikvyn nås via Inställningar → tryck 7 gånger på versionsnumret (al
 
 Appen är en påminnelseapp med tid och plats – inte en ersättning för telefonens
 väckarklocka (den togs bort för att fokusera på det som skiljer appen från Klocka-appen).
-Planerat: kalender/agenda för påminnelser långt fram i tiden och "tid → följ upp vid plats".
+
+Planerad ordning: agenda/kalender → sparade platser → "tid → följ upp vid plats" →
+påfyllning av iOS-notiser. Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
+enhetstesterna nedan och kräver en server med inloggning.
+
+**Integritet:** positionen lämnar aldrig telefonen och ingen kan följa någons GPS – se
+[docs/PRIVACY.md](docs/PRIVACY.md). Appen har i dag ingen server och skickar ingenting.
 
 ## Systemlarm (`modules/native-alarm`)
 
