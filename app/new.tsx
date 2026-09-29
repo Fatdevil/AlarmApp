@@ -412,8 +412,8 @@ export default function NewAlarmScreen() {
                       <Text style={styles.hint}>
                         Ringer {formatDayLabel(preview, now).toLowerCase()} kl. {formatClock(preview)}. Därefter
                         påminns du {followUpType === 'EXIT_LOCATION' ? 'när du lämnar' : 'när du kommer till'}{' '}
-                        {followUpPlace.name}. ”Klar” stänger båda; ”Snooza” eller att stänga av tidslarmet låter
-                        platsen fortsätta bevakas.
+                        {followUpPlace.name}, tills du trycker ”Klar” (stänger båda). Platsen påminner bara vid
+                        en ny passage efter tiden – är du redan där är tidslarmet påminnelsen.
                       </Text>
                     </>
                   )}

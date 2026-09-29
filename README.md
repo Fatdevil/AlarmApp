@@ -67,7 +67,8 @@ Agendan visar kommande påminnelser dag för dag, även långt fram i tiden. Spa
 En tidspåminnelse kan följas upp vid en sparad plats ("Följ upp vid plats"): den ringer vid
 tiden och påminner sedan igen när du lämnar eller kommer till platsen. "Klar" stänger båda;
 snooza eller stäng av tidslarmet för att låta platsen fortsätta bevakas. Zonen registreras
-direkt men larmar först efter tiden. Planerat härnäst: påfyllning av iOS-notiser (som också gör
+direkt men larmar först vid en passage efter tiden; är du redan där när tiden kommer är
+tidslarmet påminnelsen, och platsen påminner nästa gång tills du trycker "Klar". Planerat härnäst: påfyllning av iOS-notiser (som också gör
 det möjligt för upprepade påminnelser att börja ett senare datum). Vänlarm (godkänn/avvisa med kommentar, Klar) byggs först efter
 enhetstesterna nedan och kräver en server med inloggning.
 

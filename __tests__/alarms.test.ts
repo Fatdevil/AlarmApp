@@ -59,7 +59,11 @@ function alarm(overrides: Partial<LocalAlarm> = {}): LocalAlarm {
 
 const place = { id: 'loc_1', name: 'Hem', latitude: 59, longitude: 18, radius: 150 };
 
-beforeEach(() => jest.clearAllMocks());
+beforeEach(() => {
+  jest.clearAllMocks();
+  // clearAllMocks behåller implementationer – nollställ den som tester byter ut
+  m(db.getAlarmsByStatus).mockImplementation(() => []);
+});
 
 describe('createAlarm (tid)', () => {
   it('schemalägger i OS först och sparar sedan med notis-ID:n', async () => {
@@ -233,6 +237,27 @@ describe('uppföljning vid plats (tid → plats)', () => {
     m(notif.scheduleTimeAlarm).mockResolvedValue(['n2']);
     await restoreAlarm(followUp());
     expect(db.saveAlarm).toHaveBeenCalledWith(expect.objectContaining({ notificationIds: ['n2'] }));
+  });
+
+  it('startkontrollen schemalägger om en saknad tidspåminnelse', async () => {
+    m(db.getAlarmsByStatus).mockImplementation((statuses) =>
+      statuses.includes('ACTIVE_GEOFENCE') ? [{ ...followUp(), notificationIds: ['borta'] }] : []
+    );
+    m(notif.getScheduledByAlarm).mockResolvedValueOnce(new Map());
+    m(notif.scheduleTimeAlarm).mockResolvedValue(['n3']);
+    const r = await reconcileScheduledAlarms();
+    expect(r.rescheduled).toBe(1);
+    expect(db.setNotificationIds).toHaveBeenCalledWith('alarm_1', ['n3']);
+    expect(db.updateAlarmStatus).not.toHaveBeenCalled();
+  });
+
+  it('startkontrollen rör inte en uppföljning vars tid har passerat', async () => {
+    m(db.getAlarmsByStatus).mockImplementation((statuses) =>
+      statuses.includes('ACTIVE_GEOFENCE') ? [{ ...followUp(), dateTime: past }] : []
+    );
+    await reconcileScheduledAlarms();
+    expect(notif.scheduleTimeAlarm).not.toHaveBeenCalled();
+    expect(db.updateAlarmStatus).not.toHaveBeenCalled();
   });
 
   it('ångra efter tiden återställer bara zonen', async () => {

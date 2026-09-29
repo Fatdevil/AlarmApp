@@ -168,7 +168,8 @@ export function markFired(alarmId: string): void {
 
 /**
  * Stämmer av databasen mot OS vid appstart:
- * - framtida/upprepade larm som saknas i OS schemaläggs om (t.ex. efter återställd backup)
+ * - framtida/upprepade larm som saknas i OS schemaläggs om (t.ex. efter återställd backup),
+ *   även tidspåminnelsen i en uppföljning vid plats vars tid inte har kommit
  * - engångslarm vars tid passerat markeras "har ringt" om de var schemalagda,
  *   annars "missat" (de kom aldrig in i OS och kan inte ha ringt)
  */
@@ -181,7 +182,25 @@ export async function reconcileScheduledAlarms(now: Date = new Date()): Promise<
   const scheduled = getAlarmsByStatus(['SCHEDULED']).filter(
     (a) => a.triggerType === 'TIME' && a.dateTime
   );
-  const inOs = await getScheduledByAlarm(scheduled);
+  // Uppföljningar vars tid inte har kommit: tidspåminnelsen ska finnas i OS
+  const followUps = getAlarmsByStatus(['ACTIVE_GEOFENCE']).filter(
+    (a) => hasTimeReminder(a) && !isZoneArmed(a, now)
+  );
+  const inOs = await getScheduledByAlarm([...scheduled, ...followUps]);
+
+  for (const alarm of followUps) {
+    const osIds = inOs.get(alarm.id) ?? [];
+    if (osIds.length > 0) {
+      if (osIds.join() !== (alarm.notificationIds ?? []).join()) setNotificationIds(alarm.id, osIds);
+      continue;
+    }
+    try {
+      setNotificationIds(alarm.id, await scheduleTimeAlarm(alarm, now));
+      result.rescheduled++;
+    } catch (err) {
+      console.warn(`[Alarms] Kunde inte schemalägga om ${alarm.id}:`, err);
+    }
+  }
 
   for (const alarm of scheduled) {
     const osIds = inOs.get(alarm.id) ?? [];
