@@ -28,7 +28,7 @@ export function showSettingsAlert(title: string, message: string) {
   ]);
 }
 
-/** TIME gäller både påminnelser och väckarklocka. */
+/** TIME: tidspåminnelser, som ringer som systemlarm när det är tillåtet. */
 export async function ensurePermissions(triggerType: TriggerType): Promise<boolean> {
   const perms = await getPermissionSnapshot();
 

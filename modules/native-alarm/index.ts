@@ -21,13 +21,11 @@ interface NativeAlarmModule {
     timestampMs: number,
     hour: number,
     minute: number,
-    weekdays: number[],
-    groupId: string
+    weekdays: number[]
   ): Promise<void>;
   cancel(id: string): Promise<void>;
   cancelAll(): Promise<void>;
   getScheduledIds(): Promise<string[]>;
-  consumeSkips(): Promise<Record<string, number>>;
   canUseFullScreenIntent(): boolean;
   openFullScreenIntentSettings(): void;
 }
@@ -58,18 +56,11 @@ export interface NativeAlarmSpec {
   title: string;
   /** Första/enda tillfället. */
   date: Date;
-  /** 1 = söndag … 7 = lördag. Tom = engångslarm. */
+  /**
+   * 1 = söndag … 7 = lördag. Tom = engångslarm. Ett återkommande larm ringer
+   * aldrig före [date] (Android), så en serie kan börja ett senare datum.
+   */
   weekdays: number[];
-  /**
-   * Återkommande larm (Android): ringer inte före denna tidpunkt. Används efter
-   * "Hoppa över nästa" så att serien fortsätter obegränsat efter överhoppningen.
-   */
-  startAt?: Date;
-  /**
-   * Väckningsserie. Android: när ett larm i gruppen stängs av hoppas resten av
-   * gruppens larm inom tre timmar över automatiskt.
-   */
-  groupId?: string;
 }
 
 export async function scheduleNativeAlarm(spec: NativeAlarmSpec): Promise<void> {
@@ -77,11 +68,10 @@ export async function scheduleNativeAlarm(spec: NativeAlarmSpec): Promise<void> 
   await NativeModule!.schedule(
     spec.id,
     spec.title,
-    (spec.startAt ?? spec.date).getTime(),
+    spec.date.getTime(),
     spec.date.getHours(),
     spec.date.getMinutes(),
-    spec.weekdays,
-    spec.groupId ?? ''
+    spec.weekdays
   );
 }
 
@@ -101,16 +91,6 @@ export async function getScheduledNativeAlarmIds(): Promise<string[]> {
   if (!isNativeAlarmAvailable()) return [];
   const ids = await NativeModule!.getScheduledIds();
   return ids.map((id) => id.toLowerCase());
-}
-
-/**
- * Larm som Android hoppat över på egen hand ("Jag är vaken" på larmskärmen):
- * ID (gemener) → tidpunkt då överhoppningen upphör. Loggen töms vid läsning.
- */
-export async function consumeNativeSkips(): Promise<Map<string, Date>> {
-  if (!isNativeAlarmAvailable()) return new Map();
-  const raw = await NativeModule!.consumeSkips();
-  return new Map(Object.entries(raw).map(([id, ms]) => [id.toLowerCase(), new Date(ms)]));
 }
 
 /** Android 14+: false om användaren har stängt av helskärmslarm för appen. */

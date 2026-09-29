@@ -23,7 +23,7 @@ object AlarmNotifications {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
     val nm = manager(context)
     if (nm.getNotificationChannel(CHANNEL_ID) != null) return
-    val channel = NotificationChannel(CHANNEL_ID, "Väckarklocka", NotificationManager.IMPORTANCE_HIGH).apply {
+    val channel = NotificationChannel(CHANNEL_ID, "Larm", NotificationManager.IMPORTANCE_HIGH).apply {
       description = "Larm som ringer tills du stänger av dem"
       setSound(
         RingtoneManager.getDefaultUri(RingtoneManager.TYPE_ALARM),
@@ -53,7 +53,6 @@ object AlarmNotifications {
       Intent(context, AlarmActivity::class.java)
         .putExtra(AlarmScheduler.EXTRA_ID, alarm.id)
         .putExtra(AlarmActivity.EXTRA_TITLE, alarm.title)
-        .putExtra(AlarmScheduler.EXTRA_GROUP, alarm.groupId)
         .setData(Uri.parse("nativealarm://activity/" + Uri.encode(alarm.id)))
         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION),
       PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
@@ -82,14 +81,14 @@ object AlarmNotifications {
         Notification.Action.Builder(
           null,
           "Stäng av",
-          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_STOP, alarm.id, alarm.groupId, alarm.title),
+          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_STOP, alarm.id, alarm.title),
         ).build()
       )
       .addAction(
         Notification.Action.Builder(
           null,
           "Snooza ${AlarmScheduler.SNOOZE_MINUTES} min",
-          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_SNOOZE, alarm.id, alarm.groupId, alarm.title),
+          AlarmScheduler.actionIntent(context, AlarmScheduler.ACTION_SNOOZE, alarm.id, alarm.title),
         ).build()
       )
       .build()

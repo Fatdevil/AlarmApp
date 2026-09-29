@@ -1,33 +1,21 @@
 import * as Haptics from 'expo-haptics';
-import { useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, Switch, Text, View } from 'react-native';
-import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { Alert, Pressable, SectionList, Text, View } from 'react-native';
+import { AlarmCard } from '../../src/components/AlarmCard';
 import { PermissionBanner } from '../../src/components/PermissionBanner';
 import { Button, Icon } from '../../src/components/ui';
 import { useSnackbar } from '../../src/components/UndoSnackbar';
-import { formatCountdown, formatDayLabel } from '../../src/logic/time';
-import {
-  describeDays,
-  formatHM,
-  isSkipping,
-  nextWakeOccurrence,
-  seriesIsImminent,
-  upcomingOccurrence,
-  WakeAlarm,
-} from '../../src/logic/wake';
-import {
-  imAwake,
-  removeWakeAlarms,
-  restoreWakeAlarms,
-  setWakeEnabled,
-  skipNextWake,
-  unskipWake,
-} from '../../src/services/wake';
+import { buildSections, SectionKey } from '../../src/logic/sections';
+import { completeAlarm, removeAlarm, restoreAlarm } from '../../src/services/alarms';
+import { toggleChecklistItem } from '../../src/services/db';
 import { usePermissions } from '../../src/services/permissions';
-import { useWakeAlarms } from '../../src/state/useAlarms';
+import { acceptFriendAlarm, declineFriendAlarm } from '../../src/services/pushSync';
+import { useAlarms } from '../../src/state/useAlarms';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../../src/theme';
+import { LocalAlarm } from '../../src/types';
 
+/** "Nu" som uppdateras varje halvminut, så att nedräkningar och sektioner hålls aktuella. */
 function useNow(intervalMs = 30_000): Date {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -37,304 +25,187 @@ function useNow(intervalMs = 30_000): Date {
   return now;
 }
 
-function errorText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-type Group = { key: string; seriesId: string | null; alarms: WakeAlarm[] };
-
-/** Serier hålls ihop, sorterade på första larmets klockslag. */
-function groupAlarms(alarms: WakeAlarm[]): Group[] {
-  const groups = new Map<string, Group>();
-  for (const a of alarms) {
-    const key = a.seriesId ?? a.id;
-    const g = groups.get(key) ?? { key, seriesId: a.seriesId, alarms: [] };
-    g.alarms.push(a);
-    groups.set(key, g);
-  }
-  const minutes = (a: WakeAlarm) => a.hour * 60 + a.minute;
-  return [...groups.values()]
-    .map((g) => ({ ...g, alarms: g.alarms.sort((x, y) => x.seriesIndex - y.seriesIndex) }))
-    .sort((a, b) => minutes(a.alarms[0]) - minutes(b.alarms[0]));
-}
-
-export default function WakeScreen() {
+export default function RemindersScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   const router = useRouter();
   const snackbar = useSnackbar();
-  const alarms = useWakeAlarms();
-  const { permissions, refresh: refreshPermissions } = usePermissions();
+  const alarms = useAlarms();
   const now = useNow();
+  const { permissions, refresh: refreshPermissions } = usePermissions();
+  const { focus } = useLocalSearchParams<{ focus?: string }>();
+  const [showDone, setShowDone] = useState(false);
+  // Larm som öppnats via en notis lyfts fram i några sekunder
+  const [dismissedFocus, setDismissedFocus] = useState<string | null>(null);
+  const highlighted = focus && focus !== dismissedFocus ? focus : null;
 
-  const groups = useMemo(() => groupAlarms(alarms), [alarms]);
+  useEffect(() => {
+    if (!focus) return;
+    const id = setTimeout(() => setDismissedFocus(focus), 4000);
+    return () => clearTimeout(id);
+  }, [focus]);
 
-  const next = useMemo(() => {
-    let best: { alarm: WakeAlarm; at: Date } | null = null;
-    for (const a of alarms) {
-      const at = nextWakeOccurrence(a, now);
-      if (at && (!best || at < best.at)) best = { alarm: a, at };
-    }
-    return best;
-  }, [alarms, now]);
+  const sections = useMemo(
+    () =>
+      buildSections(alarms, now).map((s) =>
+        s.key === 'done' && !showDone ? { ...s, data: [] as LocalAlarm[], count: s.data.length } : { ...s, count: s.data.length }
+      ),
+    [alarms, now, showDone]
+  );
 
-  const run = async (fn: () => Promise<unknown>) => {
+  const runWithUndo = async (
+    action: (id: string) => Promise<LocalAlarm | null>,
+    alarm: LocalAlarm,
+    message: string
+  ) => {
     try {
-      await fn();
-    } catch (err) {
-      Alert.alert('Något gick fel', errorText(err));
-    }
-  };
-
-  const toggle = (alarm: WakeAlarm, enabled: boolean) => {
-    Haptics.selectionAsync().catch(() => {});
-    run(() => setWakeEnabled(alarm.id, enabled));
-  };
-
-  const remove = (ids: string[], message: string) =>
-    run(async () => {
-      const removed = await removeWakeAlarms(ids);
+      const snapshot = await action(alarm.id);
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-      snackbar.show(message, () => {
-        restoreWakeAlarms(removed).catch((err) => Alert.alert('Kunde inte ångra', errorText(err)));
-      });
-    });
-
-  const openMenu = (alarm: WakeAlarm) => {
-    const skipping = isSkipping(alarm, now);
-    const buttons: { text: string; style?: 'cancel' | 'destructive'; onPress?: () => void }[] = [];
-    if (alarm.enabled && alarm.weekdays.length > 0) {
-      if (skipping) {
-        buttons.push({ text: 'Ångra överhoppning', onPress: () => run(() => unskipWake(alarm.id)) });
-      } else {
-        const day = formatDayLabel(upcomingOccurrence(alarm, now), now).toLowerCase();
-        buttons.push({
-          text: `Hoppa över ${day}`,
-          onPress: () =>
-            run(async () => {
-              await skipNextWake(alarm.id);
-              snackbar.show(`Ringer inte ${day}`, () => {
-                unskipWake(alarm.id).catch(() => {});
-              });
-            }),
+      if (snapshot) {
+        snackbar.show(message, () => {
+          restoreAlarm(snapshot).catch((err) =>
+            Alert.alert('Kunde inte ångra', err instanceof Error ? err.message : String(err))
+          );
         });
       }
+    } catch (err) {
+      Alert.alert('Något gick fel', err instanceof Error ? err.message : String(err));
     }
-    buttons.push({ text: 'Ändra', onPress: () => router.push({ pathname: '/wake-edit', params: { id: alarm.id } }) });
-    buttons.push({
-      text: 'Radera',
-      style: 'destructive',
-      onPress: () => remove([alarm.id], `Väckning ${formatHM(alarm.hour, alarm.minute)} raderades`),
-    });
-    buttons.push({ text: 'Avbryt', style: 'cancel' });
-    Alert.alert(formatHM(alarm.hour, alarm.minute), describeDays(alarm.weekdays), buttons);
   };
 
-  const renderRow = (alarm: WakeAlarm, inSeries: boolean) => {
-    const occurrence = nextWakeOccurrence(alarm, now);
-    const active = occurrence !== null;
-    const skipping = alarm.enabled && isSkipping(alarm, now);
-    const time = formatHM(alarm.hour, alarm.minute);
-    const subtitle = [alarm.label || null, describeDays(alarm.weekdays)].filter(Boolean).join(' · ');
-
-    return (
-      <ReanimatedSwipeable
-        key={alarm.id}
-        friction={2}
-        rightThreshold={80}
-        renderRightActions={() => (
-          <View style={styles.swipeDelete}>
-            <Icon name="trash" size={22} color={colors.onAccent} />
-          </View>
-        )}
-        onSwipeableOpen={() => remove([alarm.id], `Väckning ${time} raderades`)}
-      >
-        <Pressable
-          onPress={() => router.push({ pathname: '/wake-edit', params: { id: alarm.id } })}
-          onLongPress={() => openMenu(alarm)}
-          accessibilityRole="button"
-          accessibilityLabel={`${time}, ${subtitle}${active ? '' : ', av'}`}
-          accessibilityHint="Tryck för att ändra, håll inne för fler val"
-          accessibilityActions={[
-            { name: 'menu', label: 'Fler val' },
-            { name: 'delete', label: 'Radera' },
-          ]}
-          onAccessibilityAction={(e) => {
-            if (e.nativeEvent.actionName === 'menu') openMenu(alarm);
-            if (e.nativeEvent.actionName === 'delete') remove([alarm.id], `Väckning ${time} raderades`);
-          }}
-          style={({ pressed }) => [styles.row, inSeries && styles.rowInSeries, pressed && { opacity: 0.8 }]}
-        >
-          <View style={{ flex: 1 }}>
-            <Text style={[styles.time, !active && styles.dim]}>{time}</Text>
-            <Text style={[styles.subtitle, !active && styles.dim]} numberOfLines={1}>
-              {subtitle}
-            </Text>
-            {skipping && (
-              <Text style={styles.skip}>
-                Hoppar över {formatDayLabel(upcomingOccurrence(alarm, now), now).toLowerCase()} · nästa{' '}
-                {occurrence ? formatDayLabel(occurrence, now).toLowerCase() : ''}
-              </Text>
-            )}
-          </View>
-          <Switch
-            value={alarm.enabled && active}
-            onValueChange={(v) => toggle(alarm, v)}
-            trackColor={{ true: colors.accent, false: colors.surfaceHighlight }}
-            thumbColor="#FFFFFF"
-            accessibilityLabel={`Väckning ${time}`}
-          />
-        </Pressable>
-      </ReanimatedSwipeable>
-    );
+  const handleAccept = async (alarm: LocalAlarm) => {
+    try {
+      await acceptFriendAlarm(alarm.id);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      snackbar.show('Platslarmet är aktiverat');
+    } catch (err) {
+      Alert.alert('Kunde inte aktivera', err instanceof Error ? err.message : String(err));
+      refreshPermissions();
+    }
   };
+
+  const isEmpty = alarms.length === 0;
 
   return (
-    <ScrollView
-      style={styles.screen}
-      contentContainerStyle={styles.body}
-      contentInsetAdjustmentBehavior="automatic"
-    >
-      <PermissionBanner permissions={permissions} wakeAlarms={alarms} onChanged={refreshPermissions} />
-      <View style={styles.hero} accessible accessibilityLiveRegion="polite">
-        {next ? (
-          <>
-            <Text style={styles.heroLabel}>Nästa väckning</Text>
-            <Text style={styles.heroTime}>{formatHM(next.at.getHours(), next.at.getMinutes())}</Text>
-            <Text style={styles.heroSub}>
-              {formatDayLabel(next.at, now)} · {formatCountdown(next.at, now)}
+    <View style={styles.screen}>
+
+      <SectionList
+        contentInsetAdjustmentBehavior="automatic"
+        sections={sections}
+        keyExtractor={(item) => item.id}
+        stickySectionHeadersEnabled={false}
+        contentContainerStyle={[styles.list, { paddingBottom: 110 }]}
+        ListHeaderComponent={
+<PermissionBanner permissions={permissions} alarms={alarms} onChanged={refreshPermissions} />
+        }
+        renderSectionHeader={({ section }) =>
+          section.key === ('done' as SectionKey) ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ expanded: showDone }}
+              accessibilityLabel={`${section.title}, ${section.count} st`}
+              onPress={() => setShowDone((v) => !v)}
+              style={styles.sectionHeaderRow}
+            >
+              <Text style={styles.sectionHeader}>
+                {section.title} ({section.count})
+              </Text>
+              <Icon name={showDone ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+            </Pressable>
+          ) : (
+            <Text accessibilityRole="header" style={[styles.sectionHeader, styles.sectionHeaderRow]}>
+              {section.title}
             </Text>
-          </>
-        ) : (
-          <>
-            <Text style={styles.heroLabel}>Ingen väckning på</Text>
-            <Text style={styles.heroSub}>Skapa ett larm eller slå på ett befintligt.</Text>
-          </>
+          )
+        }
+        renderItem={({ item }) => (
+          <AlarmCard
+            alarm={item}
+            now={now}
+            highlighted={item.id === highlighted}
+            onToggleChecklist={(alarmId, itemId) => {
+              Haptics.selectionAsync().catch(() => {});
+              toggleChecklistItem(alarmId, itemId);
+            }}
+            onComplete={(a) => runWithUndo(completeAlarm, a, 'Markerat som klart')}
+            onDelete={(a) => runWithUndo(removeAlarm, a, 'Larmet raderades')}
+            onAccept={handleAccept}
+            onDecline={(a) => {
+              declineFriendAlarm(a.id);
+              snackbar.show('Förfrågan avböjdes');
+            }}
+          />
         )}
-      </View>
-
-      {groups.map((group) =>
-        group.seriesId ? (
-          <View key={group.key} style={styles.series}>
-            <View style={styles.seriesHeader}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.seriesTitle}>Väckningsserie</Text>
-                <Text style={styles.subtitle}>
-                  {group.alarms.length} larm · {formatHM(group.alarms[0].hour, group.alarms[0].minute)}–
-                  {formatHM(group.alarms[group.alarms.length - 1].hour, group.alarms[group.alarms.length - 1].minute)}
-                </Text>
+        ListEmptyComponent={
+          isEmpty ? (
+            <View style={styles.empty}>
+              <View style={styles.emptyIcon}>
+                <Icon name="alarm-outline" size={36} color={colors.accentText} />
               </View>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Radera hela serien"
-                onPress={() =>
-                  Alert.alert('Radera hela serien?', `${group.alarms.length} larm tas bort.`, [
-                    { text: 'Avbryt', style: 'cancel' },
-                    {
-                      text: 'Radera',
-                      style: 'destructive',
-                      onPress: () => remove(group.alarms.map((a) => a.id), 'Väckningsserien raderades'),
-                    },
-                  ])
-                }
-                style={styles.iconButton}
-              >
-                <Icon name="trash-outline" size={20} color={colors.textMuted} />
-              </Pressable>
+              <Text style={styles.emptyTitle}>Inga larm ännu</Text>
+              <Text style={styles.emptyText}>
+                Skapa en påminnelse som ringer vid en viss tid eller när du kommer till eller lämnar
+                en plats.
+              </Text>
+              <Button title="Skapa larm" icon="add" onPress={() => router.push('/new')} />
             </View>
-            {seriesIsImminent(group.alarms, now) && (
-              <Button
-                compact
-                icon="sunny"
-                title="Jag är vaken – stäng av resten"
-                onPress={() =>
-                  run(async () => {
-                    const n = await imAwake(group.seriesId!);
-                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-                    snackbar.show(n === 1 ? '1 larm hoppas över' : `${n} larm hoppas över`);
-                  })
-                }
-                style={{ marginHorizontal: spacing.md, marginBottom: spacing.sm }}
-              />
-            )}
-            {group.alarms.map((a) => renderRow(a, true))}
-          </View>
-        ) : (
-          <View key={group.key} style={styles.single}>
-            {renderRow(group.alarms[0], false)}
-          </View>
-        )
-      )}
-
-      {alarms.length === 0 && (
-        <Text style={styles.emptyText}>
-          Tips: skapa en väckningsserie – flera larm i rad som alla stängs av när du trycker
-          &quot;Jag är vaken&quot;.
-        </Text>
-      )}
-
-      <Button
-        icon="add"
-        title="Ny väckning"
-        onPress={() => router.push('/wake-edit')}
-        style={{ marginTop: spacing.sm }}
+          ) : null
+        }
       />
-    </ScrollView>
+
+      {!isEmpty && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Nytt larm"
+          onPress={() => router.push('/new')}
+          style={({ pressed }) => [
+            styles.fab,
+            { bottom: spacing.xl },
+            pressed && { opacity: 0.85 },
+          ]}
+        >
+          <Icon name="add" size={30} color={colors.onAccent} />
+        </Pressable>
+      )}
+    </View>
   );
 }
 
 const useStyles = makeStyles(({ colors }) => ({
   screen: { flex: 1, backgroundColor: colors.background },
-  body: { padding: spacing.lg, gap: spacing.md, paddingBottom: spacing.xxxl },
-  hero: {
-    alignItems: 'center',
-    paddingVertical: spacing.xl,
-    backgroundColor: colors.surface,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    gap: 2,
-  },
-  heroLabel: { ...typography.footnote, color: colors.textSecondary },
-  heroTime: { fontSize: 56, fontWeight: '800', color: colors.textPrimary, fontVariant: ['tabular-nums'] },
-  heroSub: { ...typography.callout, color: colors.textSecondary },
-  single: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-  },
-  series: {
-    backgroundColor: colors.surface,
-    borderRadius: radii.card,
-    borderWidth: 1,
-    borderColor: colors.border,
-    overflow: 'hidden',
-    paddingTop: spacing.md,
-  },
-  seriesHeader: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: spacing.lg, marginBottom: spacing.sm },
-  seriesTitle: { ...typography.headline, color: colors.textPrimary },
-  row: {
+  list: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, flexGrow: 1 },
+  sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    minHeight: 76,
-    backgroundColor: colors.surface,
+    gap: spacing.xs,
+    minHeight: MIN_TOUCH,
+    marginTop: spacing.sm,
   },
-  rowInSeries: { borderTopWidth: 1, borderTopColor: colors.border },
-  time: { fontSize: 40, fontWeight: '300', color: colors.textPrimary, fontVariant: ['tabular-nums'] },
-  subtitle: { ...typography.footnote, color: colors.textSecondary },
-  skip: { ...typography.footnote, color: colors.warning, marginTop: 2 },
-  dim: { color: colors.textMuted },
-  iconButton: { minWidth: MIN_TOUCH, minHeight: MIN_TOUCH, alignItems: 'center', justifyContent: 'center' },
-  swipeDelete: {
-    backgroundColor: '#BE123C',
+  sectionHeader: { ...typography.headline, color: colors.textSecondary },
+  empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.lg, paddingHorizontal: spacing.xl },
+  emptyIcon: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+    backgroundColor: colors.surfaceHighlight,
+    alignItems: 'center',
     justifyContent: 'center',
-    alignItems: 'flex-end',
-    paddingHorizontal: spacing.xl,
-    flex: 1,
   },
-  emptyText: { ...typography.footnote, color: colors.textMuted, textAlign: 'center', paddingHorizontal: spacing.lg },
+  emptyTitle: { ...typography.title, color: colors.textPrimary },
+  emptyText: { ...typography.body, color: colors.textSecondary, textAlign: 'center' },
+  fab: {
+    position: 'absolute',
+    right: spacing.xl,
+    width: 64,
+    height: 64,
+    borderRadius: radii.pill,
+    backgroundColor: colors.accent,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 6,
+  },
 }));

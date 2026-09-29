@@ -11,7 +11,6 @@ import {
   TriggerType,
 } from '../types';
 import { ObservedRegionState, RegionState } from '../logic/regionState';
-import { WakeAlarm } from '../logic/wake';
 import { sanitizeDiagnosticLogs } from './sanitizer';
 
 const DB_NAME = 'alarm_poc.db';
@@ -143,6 +142,19 @@ const MIGRATIONS: (() => void)[] = [
         osId TEXT PRIMARY KEY,
         createdAt TEXT NOT NULL
       );
+    `);
+  },
+  // v9: väckarklockan är borttagen. Dess OS-larm kan fortfarande vara schemalagda,
+  // så alla deras ID:n läggs i avbokningskön (töms vid start) innan tabellen tas bort.
+  () => {
+    db.execSync(`
+      INSERT OR IGNORE INTO pending_alarm_cancellations (osId, createdAt)
+        SELECT value, datetime('now') FROM wake_alarms, json_each(wake_alarms.osIdsJson)
+        WHERE wake_alarms.osIdsJson IS NOT NULL;
+      INSERT OR IGNORE INTO pending_alarm_cancellations (osId, createdAt)
+        SELECT value, datetime('now') FROM wake_alarms, json_each(wake_alarms.pendingCancelJson)
+        WHERE wake_alarms.pendingCancelJson IS NOT NULL;
+      DROP TABLE IF EXISTS wake_alarms;
     `);
   },
 ];
@@ -294,86 +306,6 @@ export function toggleChecklistItem(alarmId: string, itemId: string): void {
 
 export function deleteAlarm(id: string): void {
   db.runSync('DELETE FROM alarms WHERE id = ?', [id]);
-  notifyChange();
-}
-
-// --- VÄCKARKLOCKA ---
-
-interface WakeRow {
-  id: string;
-  hour: number;
-  minute: number;
-  label: string;
-  weekdaysJson: string;
-  enabled: number;
-  skipUntil: string | null;
-  seriesId: string | null;
-  seriesIndex: number;
-  osIdsJson: string | null;
-  pendingCancelJson: string | null;
-  planKey: string | null;
-  nextFireAt: string | null;
-  createdAt: string;
-}
-
-function rowToWake(r: WakeRow): WakeAlarm {
-  return {
-    id: r.id,
-    hour: r.hour,
-    minute: r.minute,
-    label: r.label,
-    weekdays: safeJsonParse<number[]>(r.weekdaysJson, []),
-    enabled: r.enabled === 1,
-    skipUntil: r.skipUntil,
-    seriesId: r.seriesId,
-    seriesIndex: r.seriesIndex,
-    osIds: safeJsonParse<string[]>(r.osIdsJson, []),
-    pendingCancellationIds: safeJsonParse<string[]>(r.pendingCancelJson, []),
-    planKey: r.planKey,
-    nextFireAt: r.nextFireAt,
-    createdAt: r.createdAt,
-  };
-}
-
-export function getWakeAlarms(): WakeAlarm[] {
-  return db
-    .getAllSync<WakeRow>('SELECT * FROM wake_alarms ORDER BY hour, minute, seriesIndex')
-    .map(rowToWake);
-}
-
-export function getWakeAlarm(id: string): WakeAlarm | null {
-  const row = db.getFirstSync<WakeRow>('SELECT * FROM wake_alarms WHERE id = ?', [id]);
-  return row ? rowToWake(row) : null;
-}
-
-export function saveWakeAlarm(a: WakeAlarm): void {
-  db.runSync(
-    `INSERT OR REPLACE INTO wake_alarms (
-      id, hour, minute, label, weekdaysJson, enabled, skipUntil, seriesId, seriesIndex,
-      osIdsJson, pendingCancelJson, planKey, nextFireAt, createdAt
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      a.id,
-      a.hour,
-      a.minute,
-      a.label,
-      JSON.stringify(a.weekdays),
-      a.enabled ? 1 : 0,
-      a.skipUntil,
-      a.seriesId,
-      a.seriesIndex,
-      a.osIds.length ? JSON.stringify(a.osIds) : null,
-      a.pendingCancellationIds.length ? JSON.stringify(a.pendingCancellationIds) : null,
-      a.planKey,
-      a.nextFireAt,
-      a.createdAt,
-    ]
-  );
-  notifyChange();
-}
-
-export function deleteWakeAlarm(id: string): void {
-  db.runSync('DELETE FROM wake_alarms WHERE id = ?', [id]);
   notifyChange();
 }
 
@@ -547,7 +479,6 @@ export function purgeAllLocalData(): void {
   db.withTransactionSync(() => {
     db.runSync('DELETE FROM diagnostic_logs');
     db.runSync('DELETE FROM alarms');
-    db.runSync('DELETE FROM wake_alarms');
     db.runSync('DELETE FROM region_states');
     db.runSync('DELETE FROM pending_alarm_cancellations');
   });

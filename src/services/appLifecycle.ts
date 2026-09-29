@@ -11,16 +11,16 @@ import {
   ACTION_SNOOZE,
   initNotificationChannels,
   readNotificationData,
+  retryPendingAlarmCancellations,
 } from './notifications';
 import { acceptFriendAlarm, declineFriendAlarm, registerBackgroundPushTask } from './pushSync';
-import { reconcileWakeAlarms, snoozeWake, wakeDismissed } from './wake';
 
 export async function initializeApp(): Promise<void> {
   const steps: [string, () => Promise<unknown>][] = [
     ['notiskanaler', initNotificationChannels],
     ['push-task', registerBackgroundPushTask],
+    ['avbokningar', retryPendingAlarmCancellations],
     ['tidslarm', () => reconcileScheduledAlarms()],
-    ['väckning', () => reconcileWakeAlarms()],
     ['geofences', syncGeofencesWithOs],
   ];
   // Varje steg körs oberoende – ett fel i ett steg får inte stoppa de andra
@@ -35,12 +35,12 @@ export async function initializeApp(): Promise<void> {
 
 /**
  * Appen kommer tillbaka till förgrunden. Användaren kan ha ändrat behörigheter i
- * Inställningar (t.ex. gett "Tillåt alltid" för plats) och Android kan ha hoppat
- * över larm i en serie medan appen låg i bakgrunden.
+ * Inställningar (t.ex. gett "Tillåt alltid" för plats), och avbokningar som
+ * misslyckats tidigare försöks igen.
  */
 export async function handleAppForeground(): Promise<void> {
   const steps: [string, () => Promise<unknown>][] = [
-    ['väckning', () => reconcileWakeAlarms()],
+    ['avbokningar', retryPendingAlarmCancellations],
     ['geofences', syncGeofencesWithOs],
   ];
   for (const [name, step] of steps) {
@@ -66,11 +66,6 @@ export async function handleNotificationResponse(
   if (!data) return { focusAlarmId: null, error: null };
 
   try {
-    if (data.kind === 'WAKE') {
-      if (response.actionIdentifier === ACTION_SNOOZE) await snoozeWake(data.alarmId);
-      else if (response.actionIdentifier === ACTION_DONE) await wakeDismissed(data.alarmId);
-      return { focusAlarmId: null, error: null };
-    }
     switch (response.actionIdentifier) {
       case ACTION_DONE:
         await acknowledgeAlarm(data.alarmId);

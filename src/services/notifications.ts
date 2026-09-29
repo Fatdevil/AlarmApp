@@ -10,7 +10,6 @@ import {
 } from '../../modules/native-alarm';
 import { SNOOZE_MINUTES } from '../constants';
 import { WEEKDAY_NUMBERS } from '../logic/time';
-import { formatHM, isSkipping, SchedulePlan, WakeAlarm } from '../logic/wake';
 import { LocalAlarm } from '../types';
 import {
   clearPendingAlarmCancellations,
@@ -35,7 +34,7 @@ export const ACTION_SNOOZE = 'SNOOZE';
 export const ACTION_ACCEPT = 'ACCEPT';
 export const ACTION_DECLINE = 'DECLINE';
 
-export type NotificationKind = 'ALARM' | 'FRIEND_REQUEST' | 'WAKE';
+export type NotificationKind = 'ALARM' | 'FRIEND_REQUEST';
 
 export interface AlarmNotificationData extends Record<string, unknown> {
   kind: NotificationKind;
@@ -205,171 +204,6 @@ async function scheduleNotificationAlarm(alarm: LocalAlarm, first: Date, now: Da
   return ids;
 }
 
-// --- VÄCKARKLOCKA ---
-
-const OPEN_APP_TO_CONTINUE = 'öppna appen så fortsätter larmet';
-
-function wakeTitle(wake: WakeAlarm): string {
-  return wake.label.trim() || 'Väckning';
-}
-
-function wakeContent(wake: WakeAlarm, title: string): Notifications.NotificationContentInput {
-  const data: AlarmNotificationData = { kind: 'WAKE', alarmId: wake.id };
-  return {
-    title,
-    body: `${formatHM(wake.hour, wake.minute)} – dags att vakna`,
-    sound: Platform.OS === 'ios' ? 'defaultRingtone' : true,
-    priority: Notifications.AndroidNotificationPriority.MAX,
-    interruptionLevel: 'timeSensitive',
-    categoryIdentifier: ALARM_CATEGORY,
-    data,
-  };
-}
-
-/**
- * Schemalägger en väckningsplan i OS. Systemlarm (AlarmKit/AlarmManager) när de är
- * tillåtna, annars notiser. Allt eller inget: misslyckas något avbryts det som hunnit schemaläggas.
- */
-export async function scheduleWakePlan(wake: WakeAlarm, plan: SchedulePlan): Promise<string[]> {
-  if (!plan.repeating && plan.fixed.length === 0) return [];
-  const title = wakeTitle(wake);
-  const ids: string[] = [];
-  // Överhoppning där serien inte kan startas vid ett datum (iOS, notiser): den
-  // överhoppade veckodagen täcks av enskilda larm. Det sista säger till att appen
-  // behöver öppnas, annars upphör den veckodagen när täckningen tar slut.
-  const lastCover = wake.weekdays.length > 0 && plan.fixed.length > 0 ? plan.fixed[plan.fixed.length - 1] : null;
-
-  if ((await getNativeAlarmAuthorization()) === 'authorized') {
-    try {
-      if (Platform.OS === 'android' && wake.weekdays.length > 0 && isSkipping(wake)) {
-        // Android kan starta serien efter det överhoppade tillfället – då behövs
-        // inga ersättningslarm, och larmet fortsätter även om appen aldrig öppnas.
-        const first = new Date();
-        first.setHours(wake.hour, wake.minute, 0, 0);
-        const id = Crypto.randomUUID().toLowerCase();
-        await scheduleNativeAlarm({
-          id,
-          title,
-          date: first,
-          weekdays: wake.weekdays,
-          startAt: new Date(wake.skipUntil!),
-          groupId: wake.seriesId ?? undefined,
-        });
-        return [NATIVE_PREFIX + id];
-      }
-      if (plan.repeating) {
-        const first = new Date();
-        first.setHours(plan.repeating.hour, plan.repeating.minute, 0, 0);
-        const id = Crypto.randomUUID().toLowerCase();
-        await scheduleNativeAlarm({
-          id,
-          title,
-          date: first,
-          weekdays: plan.repeating.weekdays,
-          groupId: wake.seriesId ?? undefined,
-        });
-        ids.push(NATIVE_PREFIX + id);
-      }
-      for (const date of plan.fixed) {
-        const id = Crypto.randomUUID().toLowerCase();
-        await scheduleNativeAlarm({
-          id,
-          title: date === lastCover ? `${title} – ${OPEN_APP_TO_CONTINUE}` : title,
-          date,
-          weekdays: [],
-          groupId: wake.seriesId ?? undefined,
-        });
-        ids.push(NATIVE_PREFIX + id);
-      }
-      return ids;
-    } catch (err) {
-      console.warn('[Notifications] Systemlarm misslyckades, använder notiser:', err);
-      await cancelNotificationsBestEffort(ids);
-      ids.length = 0;
-    }
-  }
-
-  const content = wakeContent(wake, `⏰ ${title}`);
-  try {
-    if (plan.repeating) {
-      const { hour, minute, weekdays } = plan.repeating;
-      if (weekdays.length === 7) {
-        ids.push(
-          await Notifications.scheduleNotificationAsync({
-            content,
-            trigger: { type: Notifications.SchedulableTriggerInputTypes.DAILY, hour, minute, channelId: ALARM_CHANNEL_ID },
-          })
-        );
-      } else {
-        for (const weekday of weekdays) {
-          ids.push(
-            await Notifications.scheduleNotificationAsync({
-              content,
-              trigger: {
-                type: Notifications.SchedulableTriggerInputTypes.WEEKLY,
-                weekday,
-                hour,
-                minute,
-                channelId: ALARM_CHANNEL_ID,
-              },
-            })
-          );
-        }
-      }
-    }
-    for (const date of plan.fixed) {
-      ids.push(
-        await Notifications.scheduleNotificationAsync({
-          content: date === lastCover ? wakeContent(wake, `⏰ ${title} – ${OPEN_APP_TO_CONTINUE}`) : content,
-          trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date, channelId: ALARM_CHANNEL_ID },
-        })
-      );
-    }
-  } catch (err) {
-    await cancelNotificationsBestEffort(ids);
-    throw err;
-  }
-  return ids;
-}
-
-export async function scheduleWakeSnooze(wake: WakeAlarm, now: Date = new Date()): Promise<string> {
-  return Notifications.scheduleNotificationAsync({
-    content: wakeContent(wake, `⏰ ${wakeTitle(wake)} (snoozat)`),
-    trigger: {
-      type: Notifications.SchedulableTriggerInputTypes.DATE,
-      date: new Date(now.getTime() + SNOOZE_MINUTES * 60_000),
-      channelId: ALARM_CHANNEL_ID,
-    },
-  });
-}
-
-/**
- * Har telefonen själv lagt en snooze för något av de inbyggda larmen? (Android:
- * "Snooza" på larmskärmen schemalägger `<id>:snooze` utan att appen är inblandad.)
- */
-export async function hasPendingNativeSnooze(ids: string[]): Promise<boolean> {
-  const snoozeIds = ids
-    .filter((id) => id.startsWith(NATIVE_PREFIX))
-    .map((id) => `${id.slice(NATIVE_PREFIX.length)}:snooze`);
-  if (snoozeIds.length === 0) return false;
-  const scheduled = new Set(await getScheduledNativeAlarmIds());
-  return snoozeIds.some((id) => scheduled.has(id));
-}
-
-/** Vilka av de givna ID:na som OS fortfarande har schemalagda. */
-export async function stillScheduled(ids: string[]): Promise<string[]> {
-  if (ids.length === 0) return [];
-  const [requests, nativeIds] = await Promise.all([
-    Notifications.getAllScheduledNotificationsAsync(),
-    getScheduledNativeAlarmIds(),
-  ]);
-  const notif = new Set(requests.map((r) => r.identifier));
-  const native = new Set(nativeIds);
-  return ids.filter((id) =>
-    id.startsWith(NATIVE_PREFIX) ? native.has(id.slice(NATIVE_PREFIX.length)) : notif.has(id)
-  );
-}
-
 export async function scheduleSnooze(alarm: LocalAlarm, now: Date = new Date()): Promise<string> {
   return Notifications.scheduleNotificationAsync({
     content: alarmContent(alarm, '⏰ Larm (snoozat)'),
@@ -409,6 +243,16 @@ export async function cancelNotifications(ids: string[] | undefined): Promise<vo
   if (failed.length > 0) throw new CancelNotificationsError(failed);
 }
 
+/** Avbokar och returnerar de ID:n som inte gick att avboka (i stället för att kasta). */
+export async function cancelReturningFailed(ids: string[]): Promise<string[]> {
+  try {
+    await cancelNotifications(ids);
+    return [];
+  } catch (err) {
+    return err instanceof CancelNotificationsError ? err.failedIds : ids;
+  }
+}
+
 /**
  * För återställning efter ett annat fel: avbryt så mycket som går och kasta aldrig.
  * ID:n som inte kunde avbokas sparas i en fristående, beständig kö så att de inte
@@ -417,11 +261,13 @@ export async function cancelNotifications(ids: string[] | undefined): Promise<vo
 export async function cancelNotificationsBestEffort(ids: string[] | undefined): Promise<void> {
   const requested = [...new Set(ids ?? [])];
   if (requested.length === 0) return;
+  const failed = await cancelReturningFailed(requested);
+  if (failed.length === 0) return;
   try {
-    await cancelNotifications(requested);
-  } catch (err) {
-    const failed = err instanceof CancelNotificationsError ? err.failedIds : requested;
     enqueuePendingAlarmCancellations(failed);
+  } catch (err) {
+    // Anroparen hanterar redan ett annat fel (ofta från databasen) – dölj inte det
+    console.warn('[Notifications] Kunde inte köa misslyckade avbokningar:', failed, err);
   }
 }
 
@@ -430,15 +276,8 @@ export async function retryPendingAlarmCancellations(): Promise<number> {
   const pending = getPendingAlarmCancellations();
   if (pending.length === 0) return 0;
 
-  let failed: string[] = [];
-  try {
-    await cancelNotifications(pending);
-  } catch (err) {
-    failed = err instanceof CancelNotificationsError ? err.failedIds : pending;
-  }
-
-  const failedSet = new Set(failed);
-  const succeeded = pending.filter((id) => !failedSet.has(id));
+  const failed = new Set(await cancelReturningFailed(pending));
+  const succeeded = pending.filter((id) => !failed.has(id));
   removePendingAlarmCancellations(succeeded);
   return succeeded.length;
 }
@@ -504,7 +343,7 @@ export function readNotificationData(
   if (
     data &&
     typeof data.alarmId === 'string' &&
-    (data.kind === 'ALARM' || data.kind === 'FRIEND_REQUEST' || data.kind === 'WAKE')
+    (data.kind === 'ALARM' || data.kind === 'FRIEND_REQUEST')
   ) {
     return { kind: data.kind, alarmId: data.alarmId };
   }

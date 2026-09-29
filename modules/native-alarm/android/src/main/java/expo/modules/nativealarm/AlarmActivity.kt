@@ -41,9 +41,8 @@ class AlarmActivity : Activity() {
       return
     }
     val title = intent.getStringExtra(EXTRA_TITLE) ?: "Larm"
-    val groupId = intent.getStringExtra(AlarmScheduler.EXTRA_GROUP) ?: ""
 
-    setContentView(buildLayout(id, title, groupId))
+    setContentView(buildLayout(id, title))
 
     val filter = IntentFilter(ACTION_FINISH)
     if (Build.VERSION.SDK_INT >= 33) {
@@ -80,7 +79,7 @@ class AlarmActivity : Activity() {
   private fun dp(value: Int): Int =
     TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, value.toFloat(), resources.displayMetrics).toInt()
 
-  private fun buildLayout(id: String, title: String, groupId: String): LinearLayout {
+  private fun buildLayout(id: String, title: String): LinearLayout {
     val root = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       gravity = Gravity.CENTER
@@ -118,14 +117,13 @@ class AlarmActivity : Activity() {
       ).apply { topMargin = dp(16) }
     }
 
-    root.addView(button(if (groupId.isEmpty()) "Stäng av" else "Jag är vaken", "#2563EB") {
+    root.addView(button("Stäng av", "#2563EB") {
       AlarmNotifications.dismiss(this, id)
-      AlarmScheduler.skipRestOfGroup(this, id, groupId)
       finish()
     })
     root.addView(button("Snooza ${AlarmScheduler.SNOOZE_MINUTES} min", "#263450") {
       try {
-        AlarmScheduler.snooze(this, id, title, groupId)
+        AlarmScheduler.snooze(this, id, title)
       } catch (e: Exception) {
         AlarmNotifications.dismiss(this, id)
       }

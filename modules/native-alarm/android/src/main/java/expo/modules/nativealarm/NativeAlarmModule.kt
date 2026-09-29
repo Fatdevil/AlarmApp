@@ -30,11 +30,11 @@ class NativeAlarmModule : Module() {
       if (AlarmScheduler.canScheduleExact(context)) "authorized" else "denied"
     }
 
-    AsyncFunction("schedule") { id: String, title: String, timestampMs: Double, hour: Int, minute: Int, weekdays: List<Int>, groupId: String ->
+    AsyncFunction("schedule") { id: String, title: String, timestampMs: Double, hour: Int, minute: Int, weekdays: List<Int> ->
       try {
         AlarmScheduler.schedule(
           context,
-          StoredAlarm(id, title, timestampMs.toLong(), hour, minute, weekdays.toSet(), groupId),
+          StoredAlarm(id, title, timestampMs.toLong(), hour, minute, weekdays.toSet()),
         )
       } catch (e: Exception) {
         throw CodedException("ERR_NATIVE_ALARM_SCHEDULE", e.message ?: "Kunde inte schemalägga larmet", e)
@@ -51,11 +51,6 @@ class NativeAlarmModule : Module() {
 
     AsyncFunction("getScheduledIds") {
       AlarmScheduler.scheduledIds(context)
-    }
-
-    // Larm som hoppats över av "Jag är vaken" på larmskärmen: ID → överhoppning upphör (ms)
-    AsyncFunction("consumeSkips") {
-      AlarmScheduler.consumeSkips(context)
     }
 
     Function("canUseFullScreenIntent") {

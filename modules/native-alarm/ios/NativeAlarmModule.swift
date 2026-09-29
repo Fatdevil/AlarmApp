@@ -41,8 +41,7 @@ public class NativeAlarmModule: Module {
       return "unavailable"
     }
 
-    // groupId används bara på Android (AlarmKit saknar motsvarighet utan App Intents)
-    AsyncFunction("schedule") { (id: String, title: String, timestampMs: Double, hour: Int, minute: Int, weekdays: [Int], _: String) async throws in
+    AsyncFunction("schedule") { (id: String, title: String, timestampMs: Double, hour: Int, minute: Int, weekdays: [Int]) async throws in
       #if canImport(AlarmKit)
       if #available(iOS 26.0, *) {
         guard let uuid = UUID(uuidString: id) else {
@@ -62,14 +61,18 @@ public class NativeAlarmModule: Module {
       throw AlarmKitUnavailableException()
     }
 
-    AsyncFunction("cancel") { (id: String) in
+    AsyncFunction("cancel") { (id: String) throws in
       #if canImport(AlarmKit)
       if #available(iOS 26.0, *) {
         guard let uuid = UUID(uuidString: id) else {
           return
         }
-        // Kastar om larmet redan är borta – det är inget fel för oss
-        try? AlarmManager.shared.cancel(id: uuid)
+        // Ett larm som redan är borta är inget fel. Alla andra fel når JS, så att
+        // ID:t sparas och avbokningen försöks igen i stället för att tappas.
+        guard try AlarmManager.shared.alarms.contains(where: { $0.id == uuid }) else {
+          return
+        }
+        try AlarmManager.shared.cancel(id: uuid)
       }
       #endif
     }
@@ -93,11 +96,6 @@ public class NativeAlarmModule: Module {
       }
       #endif
       return []
-    }
-
-    // Överhoppningar sker bara nativt på Android (se AlarmScheduler.skipRestOfGroup)
-    AsyncFunction("consumeSkips") { () -> [String: Double] in
-      return [:]
     }
 
     // Helskärmsbehörighet finns bara på Android

@@ -16,16 +16,13 @@ data class StoredAlarm(
   val hour: Int,
   val minute: Int,
   val weekdays: Set<Int>,
-  /** Väckningsserie: larm med samma groupId hoppas över när ett av dem stängs av. */
-  val groupId: String = "",
 ) {
   val isRepeating: Boolean get() = weekdays.isNotEmpty()
 
   /**
    * Nästa tillfälle efter [now], eller null för ett passerat engångslarm. Ett
-   * återkommande larm ringer aldrig före [triggerAtMillis] – så kan "Hoppa över
-   * nästa" starta hela serien efter det överhoppade tillfället och fortsätta
-   * obegränsat, utan att appen behöver öppnas igen.
+   * återkommande larm ringer aldrig före [triggerAtMillis] – så kan en serie börja
+   * ett senare datum och sedan fortsätta obegränsat, utan att appen behöver öppnas.
    */
   fun nextTrigger(now: Long = System.currentTimeMillis()): Long? {
     if (!isRepeating) return if (triggerAtMillis > now) triggerAtMillis else null
@@ -51,7 +48,6 @@ data class StoredAlarm(
     .put("hour", hour)
     .put("minute", minute)
     .put("weekdays", JSONArray(weekdays.toList()))
-    .put("groupId", groupId)
 
   companion object {
     fun fromJson(o: JSONObject): StoredAlarm {
@@ -63,7 +59,6 @@ data class StoredAlarm(
         hour = o.getInt("hour"),
         minute = o.getInt("minute"),
         weekdays = (0 until days.length()).map { days.getInt(it) }.toSet(),
-        groupId = o.optString("groupId", ""),
       )
     }
   }
@@ -98,25 +93,3 @@ class AlarmStore(context: Context) {
     prefs.edit().remove(id).apply()
   }
 }
-
-/**
- * Larm som Android hoppade över på egen hand ("Jag är vaken" i en serie), så att
- * appen kan föra över överhoppningen till sin databas nästa gång den körs.
- * Nyckel = larm-ID, värde = tidpunkten då överhoppningen upphör (ms).
- */
-class SkipLog(context: Context) {
-  private val prefs = context.applicationContext
-    .getSharedPreferences("expo.modules.nativealarm.skips", Context.MODE_PRIVATE)
-
-  fun record(id: String, skippedUntilMillis: Long) {
-    prefs.edit().putLong(id, skippedUntilMillis).apply()
-  }
-
-  /** Returnerar och rensar loggen. */
-  fun consume(): Map<String, Long> {
-    val entries = prefs.all.mapNotNull { (k, v) -> (v as? Long)?.let { k to it } }.toMap()
-    prefs.edit().clear().apply()
-    return entries
-  }
-}
-

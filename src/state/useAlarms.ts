@@ -1,35 +1,14 @@
 import { useSyncExternalStore } from 'react';
-import { WakeAlarm } from '../logic/wake';
 import { LocalAlarm } from '../types';
-import { getAllAlarms, getWakeAlarms, notifyChange, subscribeToChanges } from '../services/db';
+import { getAllAlarms, notifyChange, subscribeToChanges } from '../services/db';
 
 let cache: LocalAlarm[] | null = null;
-
-let wakeCache: WakeAlarm[] | null = null;
 
 function subscribe(onChange: () => void): () => void {
   return subscribeToChanges(() => {
     cache = null;
-    wakeCache = null;
     onChange();
   });
-}
-
-function getWakeSnapshot(): WakeAlarm[] {
-  if (wakeCache === null) {
-    try {
-      wakeCache = getWakeAlarms();
-    } catch (err) {
-      console.warn('[useWakeAlarms] Kunde inte läsa väckningslarm:', err);
-      wakeCache = [];
-    }
-  }
-  return wakeCache;
-}
-
-/** Alla väckningslarm, i synk med databasen. */
-export function useWakeAlarms(): WakeAlarm[] {
-  return useSyncExternalStore(subscribe, getWakeSnapshot);
 }
 
 function getSnapshot(): LocalAlarm[] {

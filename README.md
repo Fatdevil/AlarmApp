@@ -48,8 +48,8 @@ GitHub Actions kör båda kontrollstegen automatiskt på varje pull request och 
 
 | Mapp | Innehåll |
 |---|---|
-| `app/(tabs)/` | Flikar: Väckning (väckarklocka) och Påminnelser |
-| `app/` | Övriga skärmar: ny/ändra väckning, nytt larm, inställningar, diagnostik |
+| `app/(tabs)/` | Startsidan: påminnelser (Agenda läggs till som egen flik) |
+| `app/` | Övriga skärmar: nytt larm, inställningar, diagnostik |
 | `src/logic/` | Ren logik utan native-beroenden (tid, sektioner, validering) – enhetstestad |
 | `src/services/` | Databas, notiser, geofencing, push och larmflöden (`alarms.ts`) |
 | `src/components/` | UI-komponenter |
@@ -57,26 +57,15 @@ GitHub Actions kör båda kontrollstegen automatiskt på varje pull request och 
 
 Diagnostikvyn nås via Inställningar → tryck 7 gånger på versionsnumret (alltid synlig i dev-läge).
 
-## Väckarklocka
+## Inriktning
 
-Fliken **Väckning** fungerar som Klocka-appen: larm med på/av-reglage, veckodagar och etikett.
-Utöver det:
-
-- **Väckningsserie** – flera larm i rad (t.ex. 06:00 + var 10:e minut × 5) som skapas i ett steg.
-- **Jag är vaken** – stänger av resten av seriens larm som skulle ringa inom tre timmar.
-  På Android sker det automatiskt när man trycker "Jag är vaken" på larmskärmen, även om appen är stängd.
-  På iOS (AlarmKit) görs det via knappen i appen.
-- **Hoppa över nästa** (håll inne på ett larm) – nästa tillfälle ringer inte, sedan fortsätter larmet som vanligt.
-  Android startar serien efter det överhoppade tillfället och fortsätter obegränsat. iOS och notiser kan inte
-  starta en återkommande serie vid ett datum: den veckodagen täcks av enskilda larm i 8 veckor, och det sista
-  ber användaren öppna appen (appen återställer serien vid varje start).
-- Engångslarm stängs av automatiskt när de har ringt.
-
-Logiken finns i `src/logic/wake.ts` (ren och testad), flödena i `src/services/wake.ts`.
+Appen är en påminnelseapp med tid och plats – inte en ersättning för telefonens
+väckarklocka (den togs bort för att fokusera på det som skiljer appen från Klocka-appen).
+Planerat: kalender/agenda för påminnelser långt fram i tiden och "tid → följ upp vid plats".
 
 ## Systemlarm (`modules/native-alarm`)
 
-Lokal Expo-modul som ger riktiga väckarklocke-larm i stället för notiser:
+Lokal Expo-modul som låter tidspåminnelser ringa som riktiga systemlarm i stället för notiser:
 
 - **iOS 26+ – AlarmKit:** ringer i tyst läge och med Fokus, visas på låsskärmen och i Dynamic Island.
   Äldre iOS faller tillbaka till notiser (AlarmKit länkas svagt).
@@ -94,11 +83,7 @@ Om modulen saknas eller behörighet nekas används `expo-notifications` automati
 - [ ] Android: "Snooza" ringer igen efter 10 min
 - [ ] Android: starta om telefonen → schemalagda larm ringer fortfarande
 - [ ] Android: stäng av helskärmsnotiser i Inställningar → banner visas i appen
-- [ ] Väckningsserie 3 × 2 min: tryck "Jag är vaken" på första larmet (Android) → resten ringer inte
-- [ ] iOS: väckningsserie, tryck "Jag är vaken" i appen → resten ringer inte
-- [ ] "Hoppa över nästa" på ett vardagslarm → ringer inte nästa gång, men gången därefter
-- [ ] Android: "Hoppa över nästa", öppna inte appen → larmet fortsätter ringa veckorna efter
-- [ ] Engångsväckning visas som avstängd efter att den har ringt
+- [ ] Uppdatering från en version med väckarklocka → gamla väckningslarm ringer inte längre
 - [ ] Platslarm "lämnar Jobbet" skapat hemma → larmar inte direkt; larmar först när du lämnar jobbet
 - [ ] Platslarm "kommer hem" skapat hemma → larmar inte direkt; larmar när du går och kommer tillbaka
 - [ ] Skapa/ta bort ett annat platslarm → befintliga platslarm larmar inte av omregistreringen

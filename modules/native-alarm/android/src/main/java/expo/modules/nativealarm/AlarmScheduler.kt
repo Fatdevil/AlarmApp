@@ -12,13 +12,11 @@ object AlarmScheduler {
   const val ACTION_STOP = "expo.modules.nativealarm.STOP"
   const val ACTION_SNOOZE = "expo.modules.nativealarm.SNOOZE"
   const val EXTRA_ID = "alarmId"
-  const val EXTRA_GROUP = "groupId"
   const val EXTRA_TITLE = "title"
 
   const val SNOOZE_MINUTES = 10
   private const val SNOOZE_SUFFIX = ":snooze"
   private const val LATE_FIRE_GRACE_MS = 15 * 60 * 1000L
-  private const val GROUP_WINDOW_MS = 3 * 60 * 60 * 1000L
 
   fun canScheduleExact(context: Context): Boolean {
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return true
@@ -46,52 +44,22 @@ object AlarmScheduler {
 
   /**
    * Snooza ett larm som ringer. Ett engångslarm är redan borttaget ur lagringen när
-   * det ringer (se onFired), så titel och grupp skickas med i intentet som reserv.
+   * det ringer (se onFired), så titeln skickas med i intentet som reserv.
    */
-  fun snooze(context: Context, id: String, title: String? = null, groupId: String? = null) {
+  fun snooze(context: Context, id: String, title: String? = null) {
     AlarmNotifications.dismiss(context, id)
     val store = AlarmStore(context)
     val baseId = id.removeSuffix(SNOOZE_SUFFIX)
     val source = store.get(id) ?: store.get(baseId)
     val snoozeTitle = source?.title ?: title ?: "Larm"
-    val snoozeGroup = source?.groupId ?: groupId ?: ""
     val at = System.currentTimeMillis() + SNOOZE_MINUTES * 60_000L
-    schedule(context, StoredAlarm(baseId + SNOOZE_SUFFIX, snoozeTitle, at, 0, 0, emptySet(), snoozeGroup))
+    schedule(context, StoredAlarm(baseId + SNOOZE_SUFFIX, snoozeTitle, at, 0, 0, emptySet()))
   }
 
   /** Avbryter alla larm (används när användaren raderar all data). */
   fun cancelAll(context: Context) {
     for (alarm in AlarmStore(context).all()) {
       cancel(context, alarm.id)
-    }
-    SkipLog(context).consume()
-  }
-
-  /**
-   * Väckningsserie: användaren har stängt av ett larm och är vaken. Övriga larm i
-   * gruppen som skulle ringa inom tre timmar hoppas över (återkommande larm flyttas
-   * till sitt nästa tillfälle, engångslarm tas bort).
-   */
-  fun skipRestOfGroup(context: Context, stoppedId: String, groupId: String) {
-    if (groupId.isEmpty()) return
-    val now = System.currentTimeMillis()
-    val stoppedBase = stoppedId.removeSuffix(SNOOZE_SUFFIX)
-    for (alarm in AlarmStore(context).all()) {
-      if (alarm.groupId != groupId || alarm.id.removeSuffix(SNOOZE_SUFFIX) == stoppedBase) continue
-      val next = alarm.nextTrigger(now) ?: continue
-      if (next - now > GROUP_WINDOW_MS) continue
-      if (!alarm.id.endsWith(SNOOZE_SUFFIX)) {
-        SkipLog(context).record(alarm.id, next + 60_000L)
-      }
-      if (alarm.isRepeating && !alarm.id.endsWith(SNOOZE_SUFFIX)) {
-        try {
-          schedule(context, alarm, after = next)
-        } catch (e: Exception) {
-          cancel(context, alarm.id)
-        }
-      } else {
-        cancel(context, alarm.id)
-      }
     }
   }
 
@@ -130,9 +98,6 @@ object AlarmScheduler {
 
   fun scheduledIds(context: Context): List<String> = AlarmStore(context).all().map { it.id }
 
-  fun consumeSkips(context: Context): Map<String, Double> =
-    SkipLog(context).consume().mapValues { it.value.toDouble() }
-
   private fun alarmManager(context: Context) =
     context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
@@ -162,12 +127,11 @@ object AlarmScheduler {
     )
   }
 
-  fun actionIntent(context: Context, action: String, id: String, groupId: String, title: String): PendingIntent {
+  fun actionIntent(context: Context, action: String, id: String, title: String): PendingIntent {
     val intent = Intent(context, AlarmReceiver::class.java)
       .setAction(action)
       .setData(Uri.parse("nativealarm://" + action.substringAfterLast('.').lowercase() + "/" + Uri.encode(id)))
       .putExtra(EXTRA_ID, id)
-      .putExtra(EXTRA_GROUP, groupId)
       .putExtra(EXTRA_TITLE, title)
     return PendingIntent.getBroadcast(
       context,

@@ -43,8 +43,8 @@ class StoredAlarmTest {
   }
 
   @Test
-  fun hoppaOverEttTillfalleGerNastaDag() {
-    val daily = StoredAlarm("d", "t", 0, 6, 10, (1..7).toSet(), "series1")
+  fun nastaTillfalleEfterEttSomRingtArNastaDag() {
+    val daily = StoredAlarm("d", "t", 0, 6, 10, (1..7).toSet())
     val first = daily.nextTrigger(at(2026, Calendar.SEPTEMBER, 26, 6, 5))!!
     val skipped = cal(daily.nextTrigger(first)!!)
     assertEquals(27, skipped.get(Calendar.DAY_OF_MONTH))
@@ -52,8 +52,8 @@ class StoredAlarmTest {
   }
 
   @Test
-  fun serieStartarEfterOverhoppningOchFortsatterObegransat() {
-    // "Hoppa över nästa" på måndag 28/9 07:30 → serien startar 07:31
+  fun serieStartarVidStartdatumOchFortsatterObegransat() {
+    // Vardagspåminnelse som börjar gälla måndag 28/9 07:31
     val startAfter = StoredAlarm("e", "t", at(2026, Calendar.SEPTEMBER, 28, 7, 31), 7, 30, setOf(2, 3, 4, 5, 6))
     val first = cal(startAfter.nextTrigger(friEvening)!!)
     assertEquals(29, first.get(Calendar.DAY_OF_MONTH))
@@ -75,13 +75,12 @@ class StoredAlarmTest {
   @Test
   fun jsonRundresa() {
     assertEquals(workdays, StoredAlarm.fromJson(JSONObject(workdays.toJson().toString())))
-    val grouped = StoredAlarm("d", "t", 0, 6, 10, (1..7).toSet(), "series1")
-    assertEquals("series1", StoredAlarm.fromJson(JSONObject(grouped.toJson().toString())).groupId)
   }
 
   @Test
-  fun aldreJsonUtanGrupp() {
-    val legacy = JSONObject("""{"id":"x","title":"t","triggerAtMillis":0,"hour":1,"minute":2,"weekdays":[]}""")
-    assertEquals("", StoredAlarm.fromJson(legacy).groupId)
+  fun aldreJsonMedVackningsgruppLasesFortfarande() {
+    // Larm sparade av den borttagna väckarklockan har ett extra fält "groupId"
+    val legacy = JSONObject("""{"id":"x","title":"t","triggerAtMillis":5,"hour":1,"minute":2,"weekdays":[2],"groupId":"s1"}""")
+    assertEquals(StoredAlarm("x", "t", 5, 1, 2, setOf(2)), StoredAlarm.fromJson(legacy))
   }
 }
