@@ -37,8 +37,10 @@ import {
   CancelNotificationsError,
   cancelNotifications,
   cancelNotificationsBestEffort,
+  getNotificationScheduleSummary,
   getScheduledByAlarm,
   retryPendingAlarmCancellations,
+  scheduleSnooze,
   scheduleTimeAlarm,
 } from '../src/services/notifications';
 /* eslint-enable import/first */
@@ -202,5 +204,26 @@ describe('cancelAllScheduledNotifications', () => {
     expect(Native.cancelAllNativeAlarms).toHaveBeenCalled();
     expect(Notifications.cancelAllScheduledNotificationsAsync).toHaveBeenCalled();
     expect(db.clearPendingAlarmCancellations).toHaveBeenCalled();
+  });
+});
+
+describe('snoozar i notisschemat', () => {
+  it('en snooze märks så att påfyllningen kan känna igen den', async () => {
+    await scheduleSnooze(alarm());
+    expect(Notifications.scheduleNotificationAsync).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        content: expect.objectContaining({ data: { kind: 'ALARM', alarmId: `alarm_${UUID}`, snooze: true } }),
+      })
+    );
+  });
+
+  it('sammanställer schemat med snoozarna för sig', async () => {
+    (Notifications.getAllScheduledNotificationsAsync as jest.Mock).mockResolvedValueOnce([
+      { identifier: 'n1', content: { data: { alarmId: 'a' } } },
+      { identifier: 's1', content: { data: { alarmId: 'a', snooze: true } } },
+    ]);
+    const summary = await getNotificationScheduleSummary();
+    expect(summary.total).toBe(2);
+    expect([...summary.snoozeIds]).toEqual(['s1']);
   });
 });
