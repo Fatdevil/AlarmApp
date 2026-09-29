@@ -135,6 +135,15 @@ describe('scheduleTimeAlarm', () => {
     );
   });
 
+  it('ett upprepat larm med startdatum längre fram börjar direkt även på Android', async () => {
+    const now = new Date(2026, 8, 23, 14, 10);
+    const later = new Date(2026, 9, 5, 7, 0).toISOString();
+    await scheduleTimeAlarm(alarm({ repeat: 'DAILY', dateTime: later }), now);
+    expect(Native.scheduleNativeAlarm).toHaveBeenCalledWith(
+      expect.objectContaining({ date: new Date(2026, 8, 24, 7, 0) })
+    );
+  });
+
   it('faller tillbaka till notis om systemlarm inte är tillåtna', async () => {
     (Native.getNativeAlarmAuthorization as jest.Mock).mockResolvedValueOnce('unavailable');
     await expect(scheduleTimeAlarm(alarm())).resolves.toEqual(['notif-1']);

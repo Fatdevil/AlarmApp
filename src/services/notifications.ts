@@ -9,7 +9,7 @@ import {
   scheduleNativeAlarm,
 } from '../../modules/native-alarm';
 import { SNOOZE_MINUTES } from '../constants';
-import { WEEKDAY_NUMBERS } from '../logic/time';
+import { nextOccurrence, WEEKDAY_NUMBERS } from '../logic/time';
 import { LocalAlarm } from '../types';
 import {
   clearPendingAlarmCancellations,
@@ -137,7 +137,9 @@ export async function scheduleTimeAlarm(alarm: LocalAlarm, now: Date = new Date(
       await scheduleNativeAlarm({
         id,
         title: alarm.content,
-        date: first,
+        // Android väntar annars till en framtida första tid; iOS gör det inte. Börja direkt
+        // på båda, så att telefonen ringer när appen visar (gäller äldre larm med startdatum).
+        date: repeat === 'NONE' ? first : nextOccurrence(alarm.dateTime, repeat, now)!,
         weekdays: repeat === 'DAILY' ? [1, 2, 3, 4, 5, 6, 7] : repeat === 'WEEKDAYS' ? WEEKDAY_NUMBERS : [],
       });
       return [NATIVE_PREFIX + id];

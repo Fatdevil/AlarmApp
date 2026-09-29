@@ -51,13 +51,10 @@ describe('nextOccurrence', () => {
     expect([next.getDate(), next.getHours()]).toEqual([24, 9]);
   });
 
-  it('upprepat larm med framtida startdatum ringer först då', () => {
+  it('upprepat larm börjar direkt även om den första tiden ligger längre fram', () => {
     const start = new Date(2026, 9, 5, 7, 0); // måndag 5 okt
     const daily = nextOccurrence(start.toISOString(), 'DAILY', wed)!;
-    expect(daily.getTime()).toBe(start.getTime());
-    const saturday = new Date(2026, 9, 3, 7, 0);
-    const weekdays = nextOccurrence(saturday.toISOString(), 'WEEKDAYS', wed)!;
-    expect([weekdays.getDate(), weekdays.getHours()]).toEqual([5, 7]);
+    expect([daily.getDate(), daily.getHours()]).toEqual([24, 7]);
   });
 
   it('vardagslarm hoppar över helgen', () => {

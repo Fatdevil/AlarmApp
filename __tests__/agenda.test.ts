@@ -79,10 +79,10 @@ describe('buildAgenda', () => {
     expect(keys).toEqual(['2026-09-24', '2026-09-25', '2026-09-28', '2026-09-29']);
   });
 
-  it('ett upprepat larm med startdatum börjar först den dagen', () => {
-    const fromFriday = timeAlarm('fredag', new Date(2026, 8, 25, 7, 0), 'DAILY');
-    const keys = buildAgenda([fromFriday], wed, 5).days.map((d) => d.key);
-    expect(keys).toEqual(['2026-09-25', '2026-09-26', '2026-09-27']);
+  it('ett upprepat larm med startdatum längre fram visas från idag, som telefonen ringer', () => {
+    const fromFriday = timeAlarm('fredag', new Date(2026, 8, 25, 18, 0), 'DAILY');
+    const keys = buildAgenda([fromFriday], wed, 3).days.map((d) => d.key);
+    expect(keys).toEqual(['2026-09-23', '2026-09-24', '2026-09-25']);
   });
 
   it('platslarm visas för sig och övriga statusar utelämnas', () => {

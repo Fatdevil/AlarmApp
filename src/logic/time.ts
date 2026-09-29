@@ -87,8 +87,10 @@ export function nextOccurrence(
   if (isNaN(first.getTime())) return null;
   if (repeat === 'NONE') return first.getTime() > now.getTime() ? first : null;
 
-  // Ett upprepat larm börjar gälla först vid sin första tid (samma regel som Androids systemlarm)
-  const from = first.getTime() > now.getTime() ? new Date(first.getTime() - 1) : now;
+  // Upprepade larm börjar alltid direkt: bara klockslaget i den första tiden används.
+  // iOS (AlarmKit och notiser) kan inte vänta med att börja upprepa, så ett startdatum
+  // längre fram skulle visas fel. Android schemaläggs på samma sätt, se scheduleTimeAlarm.
+  const from = now;
   const candidate = new Date(from);
   candidate.setHours(first.getHours(), first.getMinutes(), 0, 0);
   if (candidate.getTime() <= from.getTime()) candidate.setDate(candidate.getDate() + 1);
@@ -100,8 +102,8 @@ export function nextOccurrence(
 
 /**
  * Första tillfället för ett nytt upprepat larm: nästa gång klockslaget i [chosen] infaller
- * från [now]. Ett valt datum längre fram ignoreras – iOS (AlarmKit och notiser) kan inte
- * vänta med att börja upprepa, så alla plattformar börjar direkt.
+ * från [now]. Ett valt datum längre fram ignoreras, eftersom upprepningar alltid börjar
+ * direkt (se nextOccurrence).
  */
 export function repeatingStart(chosen: Date, repeat: RepeatRule, now: Date = new Date()): Date {
   const clock = new Date(now);

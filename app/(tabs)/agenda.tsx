@@ -15,6 +15,11 @@ const STRIP_DAYS = 42;
 const weekdayFormat = new Intl.DateTimeFormat(LOCALE, { weekday: 'short' });
 const monthFormat = new Intl.DateTimeFormat(LOCALE, { month: 'short' });
 
+/** Öppnar ett larm i Påminnelser. [at] gör att samma larm lyfts fram igen vid nästa tryck. */
+function focusParams(alarmId: string) {
+  return { focus: alarmId, at: String(Date.now()) };
+}
+
 type Row = { kind: 'time'; item: AgendaItem } | { kind: 'place'; alarm: LocalAlarm };
 
 interface Section {
@@ -68,7 +73,7 @@ export default function AgendaScreen() {
   }, [agenda, now, showPlaces]);
 
   const addOn = (date: Date) => router.push({ pathname: '/new', params: { date: dayKey(date) } });
-  const openAlarm = (alarm: LocalAlarm) => router.navigate({ pathname: '/', params: { focus: alarm.id } });
+  const openAlarm = (alarm: LocalAlarm) => router.navigate({ pathname: '/', params: focusParams(alarm.id) });
 
   const selectedKey = useRef<string | null>(null);
   const retries = useRef(0);
