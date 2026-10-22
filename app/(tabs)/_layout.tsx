@@ -1,37 +1,18 @@
-import { Link } from 'expo-router';
 import Tabs from 'expo-router/js-tabs';
 import React from 'react';
-import { Pressable } from 'react-native';
 import { Icon } from '../../src/components/ui';
-import { MIN_TOUCH, useTheme } from '../../src/theme';
-
-function SettingsButton() {
-  const { colors } = useTheme();
-  return (
-    <Link href="/settings" asChild>
-      <Pressable
-        accessibilityRole="button"
-        accessibilityLabel="Inställningar"
-        hitSlop={8}
-        style={{ minWidth: MIN_TOUCH, minHeight: MIN_TOUCH, alignItems: 'center', justifyContent: 'center', marginRight: 8 }}
-      >
-        <Icon name="settings-outline" size={24} color={colors.accentText} />
-      </Pressable>
-    </Link>
-  );
-}
+import { useTheme } from '../../src/theme';
 
 export default function TabsLayout() {
   const { colors } = useTheme();
   return (
     <Tabs
       screenOptions={{
-        headerRight: () => <SettingsButton />,
-        headerStyle: { backgroundColor: colors.background },
-        headerShadowVisible: false,
-        headerTitleStyle: { color: colors.textPrimary, fontWeight: '700' },
+        // Flikarna ritar egna stora rubriker (ScreenHeader)
+        headerShown: false,
         tabBarActiveTintColor: colors.accentText,
         tabBarInactiveTintColor: colors.textMuted,
+        tabBarLabelStyle: { fontSize: 11, fontWeight: '600' },
         tabBarStyle: { backgroundColor: colors.background, borderTopColor: colors.border },
       }}
     >
@@ -39,14 +20,18 @@ export default function TabsLayout() {
         name="index"
         options={{
           title: 'Påminnelser',
-          tabBarIcon: ({ color, size }) => <Icon name="list" size={size} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <Icon name={focused ? 'notifications' : 'notifications-outline'} size={size} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
         name="agenda"
         options={{
           title: 'Agenda',
-          tabBarIcon: ({ color, size }) => <Icon name="calendar-outline" size={size} color={color} />,
+          tabBarIcon: ({ color, size, focused }) => (
+            <Icon name={focused ? 'calendar' : 'calendar-outline'} size={size} color={color} />
+          ),
         }}
       />
     </Tabs>

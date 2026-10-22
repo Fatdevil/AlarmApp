@@ -1,12 +1,18 @@
 import * as Haptics from 'expo-haptics';
-import { useLocalSearchParams, useRouter } from 'expo-router';
+import { Link, useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, SectionList, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { AlarmCard } from '../../src/components/AlarmCard';
+import { AlarmRow } from '../../src/components/AlarmRow';
+import { NextCard } from '../../src/components/NextCard';
 import { PermissionBanner } from '../../src/components/PermissionBanner';
+import { ScreenHeader } from '../../src/components/ScreenHeader';
 import { Button, Icon } from '../../src/components/ui';
 import { useSnackbar } from '../../src/components/UndoSnackbar';
-import { AlarmSection, buildSections, SectionKey } from '../../src/logic/sections';
+import { pickNext } from '../../src/logic/alarmDisplay';
+import { AlarmSection, buildSections, countActive, SectionKey } from '../../src/logic/sections';
+import { LOCALE } from '../../src/logic/time';
 import { completeAlarm, removeAlarm, restoreAlarm } from '../../src/services/alarms';
 import { toggleChecklistItem } from '../../src/services/db';
 import { usePermissions } from '../../src/services/permissions';
@@ -16,17 +22,37 @@ import { useNow } from '../../src/state/useNow';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../../src/theme';
 import { LocalAlarm } from '../../src/types';
 
+const dateFormat = new Intl.DateTimeFormat(LOCALE, { weekday: 'long', day: 'numeric', month: 'long' });
+
+/** Sektioner som kräver handling visas som kort, övriga som rader. */
+const CARD_SECTIONS: SectionKey[] = ['requests', 'attention'];
+
+type Section = AlarmSection & { count: number };
+
+function SettingsButton() {
+  const styles = useStyles();
+  const { colors } = useTheme();
+  return (
+    <Link href="/settings" asChild>
+      <Pressable accessibilityRole="button" accessibilityLabel="Inställningar" hitSlop={4} style={styles.roundButton}>
+        <Icon name="settings-outline" size={22} color={colors.textSecondary} />
+      </Pressable>
+    </Link>
+  );
+}
+
 export default function RemindersScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
   const router = useRouter();
+  const insets = useSafeAreaInsets();
   const snackbar = useSnackbar();
   const alarms = useAlarms();
   const now = useNow();
   const { permissions, refresh: refreshPermissions } = usePermissions();
   const { focus, at } = useLocalSearchParams<{ focus?: string; at?: string }>();
   const [showDone, setShowDone] = useState(false);
-  const listRef = useRef<SectionList<LocalAlarm, AlarmSection & { count: number }>>(null);
+  const listRef = useRef<SectionList<LocalAlarm, Section>>(null);
   // Larm som öppnats via en notis eller agendan lyfts fram i några sekunder. [at] skiljer
   // två tryck på samma larm åt, så att det lyfts fram igen.
   const focusToken = focus ? `${focus}@${at ?? ''}` : null;
@@ -39,12 +65,17 @@ export default function RemindersScreen() {
     return () => clearTimeout(id);
   }, [focusToken]);
 
-  const sections = useMemo(
+  // "Nästa" visas stort överst och tas därför bort ur sin sektion
+  const next = useMemo(() => pickNext(alarms, now), [alarms, now]);
+
+  const sections = useMemo<Section[]>(
     () =>
-      buildSections(alarms, now).map((s) =>
-        s.key === 'done' && !showDone ? { ...s, data: [] as LocalAlarm[], count: s.data.length } : { ...s, count: s.data.length }
-      ),
-    [alarms, now, showDone]
+      buildSections(alarms, now).flatMap((s) => {
+        const data = s.data.filter((a) => a.id !== next?.id);
+        if (data.length === 0) return [];
+        return [{ ...s, data: s.key === 'done' && !showDone ? [] : data, count: data.length }];
+      }),
+    [alarms, now, next, showDone]
   );
 
   // Scrolla fram det framlyfta larmet (en gång per tryck)
@@ -78,6 +109,13 @@ export default function RemindersScreen() {
     }
   };
 
+  const complete = (a: LocalAlarm) => runWithUndo(completeAlarm, a, 'Markerat som klart');
+  const remove = (a: LocalAlarm) => runWithUndo(removeAlarm, a, 'Påminnelsen raderades');
+  const toggleItem = (alarmId: string, itemId: string) => {
+    Haptics.selectionAsync().catch(() => {});
+    toggleChecklistItem(alarmId, itemId);
+  };
+
   const handleAccept = async (alarm: LocalAlarm) => {
     try {
       await acceptFriendAlarm(alarm.id);
@@ -90,10 +128,12 @@ export default function RemindersScreen() {
   };
 
   const isEmpty = alarms.length === 0;
+  const active = countActive(alarms);
+  const today = dateFormat.format(now);
+  const subtitle = `${today.charAt(0).toUpperCase()}${today.slice(1)}${active > 0 ? ` · ${active} aktiva` : ''}`;
 
   return (
     <View style={styles.screen}>
-
       <SectionList
         ref={listRef}
         onScrollToIndexFailed={(info) =>
@@ -101,16 +141,19 @@ export default function RemindersScreen() {
             ?.getScrollResponder()
             ?.scrollTo({ y: info.index * info.averageItemLength, animated: true })
         }
-        contentInsetAdjustmentBehavior="automatic"
         sections={sections}
         keyExtractor={(item) => item.id}
         stickySectionHeadersEnabled={false}
-        contentContainerStyle={[styles.list, { paddingBottom: 110 }]}
+        contentContainerStyle={[styles.list, { paddingTop: insets.top + spacing.lg, paddingBottom: 120 }]}
         ListHeaderComponent={
-<PermissionBanner permissions={permissions} alarms={alarms} onChanged={refreshPermissions} />
+          <>
+            <ScreenHeader title="Påminnelser" subtitle={subtitle} right={<SettingsButton />} />
+            <PermissionBanner permissions={permissions} alarms={alarms} onChanged={refreshPermissions} />
+            {next && <NextCard alarm={next} now={now} highlighted={next.id === highlighted} onComplete={complete} />}
+          </>
         }
         renderSectionHeader={({ section }) =>
-          section.key === ('done' as SectionKey) ? (
+          section.key === 'done' ? (
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ expanded: showDone }}
@@ -119,46 +162,53 @@ export default function RemindersScreen() {
               style={styles.sectionHeaderRow}
             >
               <Text style={styles.sectionHeader}>
-                {section.title} ({section.count})
+                {section.title.toUpperCase()} ({section.count})
               </Text>
-              <Icon name={showDone ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+              <Icon name={showDone ? 'chevron-up' : 'chevron-down'} size={16} color={colors.textMuted} />
             </Pressable>
           ) : (
             <Text accessibilityRole="header" style={[styles.sectionHeader, styles.sectionHeaderRow]}>
-              {section.title}
+              {section.key === 'places' ? 'BEVAKAS · PLATSER' : section.title.toUpperCase()}
             </Text>
           )
         }
-        renderItem={({ item }) => (
-          <AlarmCard
-            alarm={item}
-            now={now}
-            highlighted={item.id === highlighted}
-            onToggleChecklist={(alarmId, itemId) => {
-              Haptics.selectionAsync().catch(() => {});
-              toggleChecklistItem(alarmId, itemId);
-            }}
-            onComplete={(a) => runWithUndo(completeAlarm, a, 'Markerat som klart')}
-            onDelete={(a) => runWithUndo(removeAlarm, a, 'Larmet raderades')}
-            onAccept={handleAccept}
-            onDecline={(a) => {
-              declineFriendAlarm(a.id);
-              snackbar.show('Förfrågan avböjdes');
-            }}
-          />
-        )}
+        renderItem={({ item, section }) =>
+          CARD_SECTIONS.includes(section.key) ? (
+            <AlarmCard
+              alarm={item}
+              now={now}
+              highlighted={item.id === highlighted}
+              onToggleChecklist={toggleItem}
+              onComplete={complete}
+              onDelete={remove}
+              onAccept={handleAccept}
+              onDecline={(a) => {
+                declineFriendAlarm(a.id);
+                snackbar.show('Förfrågan avböjdes');
+              }}
+            />
+          ) : (
+            <AlarmRow
+              alarm={item}
+              now={now}
+              highlighted={item.id === highlighted}
+              onToggleChecklist={toggleItem}
+              onComplete={complete}
+              onDelete={remove}
+            />
+          )
+        }
         ListEmptyComponent={
           isEmpty ? (
             <View style={styles.empty}>
               <View style={styles.emptyIcon}>
-                <Icon name="alarm-outline" size={36} color={colors.accentText} />
+                <Icon name="notifications-outline" size={36} color={colors.accentText} />
               </View>
-              <Text style={styles.emptyTitle}>Inga larm ännu</Text>
+              <Text style={styles.emptyTitle}>Inga påminnelser ännu</Text>
               <Text style={styles.emptyText}>
-                Skapa en påminnelse som ringer vid en viss tid eller när du kommer till eller lämnar
-                en plats.
+                Bli påmind vid en viss tid – eller när du kommer till eller lämnar en plats.
               </Text>
-              <Button title="Skapa larm" icon="add" onPress={() => router.push('/new')} />
+              <Button title="Ny påminnelse" icon="add" onPress={() => router.push('/new')} />
             </View>
           ) : null
         }
@@ -167,24 +217,29 @@ export default function RemindersScreen() {
       {!isEmpty && (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel="Nytt larm"
+          accessibilityLabel="Ny påminnelse"
           onPress={() => router.push('/new')}
-          style={({ pressed }) => [
-            styles.fab,
-            { bottom: spacing.xl },
-            pressed && { opacity: 0.85 },
-          ]}
+          style={({ pressed }) => [styles.fab, pressed && { opacity: 0.85 }]}
         >
-          <Icon name="add" size={30} color={colors.onAccent} />
+          <Icon name="add" size={24} color={colors.onAccent} />
+          <Text style={styles.fabText}>Ny påminnelse</Text>
         </Pressable>
       )}
     </View>
   );
 }
 
-const useStyles = makeStyles(({ colors }) => ({
+const useStyles = makeStyles(({ colors, dark }) => ({
   screen: { flex: 1, backgroundColor: colors.background },
-  list: { paddingHorizontal: spacing.lg, paddingTop: spacing.sm, flexGrow: 1 },
+  list: { paddingHorizontal: spacing.xl, flexGrow: 1 },
+  roundButton: {
+    width: MIN_TOUCH,
+    height: MIN_TOUCH,
+    borderRadius: MIN_TOUCH / 2,
+    backgroundColor: colors.surfaceHighlight,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -192,13 +247,13 @@ const useStyles = makeStyles(({ colors }) => ({
     minHeight: MIN_TOUCH,
     marginTop: spacing.sm,
   },
-  sectionHeader: { ...typography.headline, color: colors.textSecondary },
+  sectionHeader: { ...typography.label, letterSpacing: 1, color: colors.textMuted },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: spacing.lg, paddingHorizontal: spacing.xl },
   emptyIcon: {
     width: 80,
     height: 80,
     borderRadius: 40,
-    backgroundColor: colors.surfaceHighlight,
+    backgroundColor: colors.accentBg,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -207,16 +262,20 @@ const useStyles = makeStyles(({ colors }) => ({
   fab: {
     position: 'absolute',
     right: spacing.xl,
-    width: 64,
-    height: 64,
+    bottom: spacing.xl,
+    height: 56,
+    paddingLeft: spacing.lg,
+    paddingRight: spacing.xxl,
     borderRadius: radii.pill,
     backgroundColor: colors.accent,
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
+    gap: spacing.sm,
     shadowColor: '#000',
-    shadowOpacity: 0.3,
-    shadowRadius: 10,
-    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: dark ? 0.45 : 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
     elevation: 6,
   },
+  fabText: { ...typography.headline, fontWeight: '700', color: colors.onAccent },
 }));

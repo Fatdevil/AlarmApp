@@ -83,7 +83,7 @@ class AlarmActivity : Activity() {
     val root = LinearLayout(this).apply {
       orientation = LinearLayout.VERTICAL
       gravity = Gravity.CENTER
-      setBackgroundColor(Color.parseColor("#090D16"))
+      setBackgroundColor(Color.parseColor("#0B0C10"))
       setPadding(dp(32), dp(48), dp(32), dp(48))
     }
 
@@ -97,16 +97,17 @@ class AlarmActivity : Activity() {
 
     root.addView(TextView(this).apply {
       text = title
-      setTextColor(Color.parseColor("#B4C0D3"))
+      setTextColor(Color.parseColor("#A7ADBA"))
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 22f)
       gravity = Gravity.CENTER
       setPadding(0, dp(16), 0, dp(48))
     })
 
-    fun button(label: String, background: String, onClick: () -> Unit) = Button(this).apply {
+    // Samma färger som appens tema: orange för huvudvalet, mörk text på orange
+    fun button(label: String, background: String, foreground: String, onClick: () -> Unit) = Button(this).apply {
       text = label
       isAllCaps = false
-      setTextColor(Color.WHITE)
+      setTextColor(Color.parseColor(foreground))
       setTextSize(TypedValue.COMPLEX_UNIT_SP, 20f)
       setBackgroundColor(Color.parseColor(background))
       minHeight = dp(64)
@@ -117,11 +118,11 @@ class AlarmActivity : Activity() {
       ).apply { topMargin = dp(16) }
     }
 
-    root.addView(button("Stäng av", "#2563EB") {
+    root.addView(button("Stäng av", "#FF8A3D", "#1A1206") {
       AlarmNotifications.dismiss(this, id)
       finish()
     })
-    root.addView(button("Snooza ${AlarmScheduler.SNOOZE_MINUTES} min", "#263450") {
+    root.addView(button("Snooza ${AlarmScheduler.SNOOZE_MINUTES} min", "#1D2028", "#F2F3F5") {
       try {
         AlarmScheduler.snooze(this, id, title)
       } catch (e: Exception) {

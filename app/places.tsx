@@ -7,6 +7,19 @@ import { useAlarms } from '../src/state/useAlarms';
 import { usePlaces } from '../src/state/usePlaces';
 import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../src/theme';
 
+/** Zonen som en streckad ring: större radie, större ring. */
+function RadiusGlyph({ radius }: { radius: number }) {
+  const styles = useStyles();
+  const size = Math.round(18 + 14 * Math.min(1, Math.max(0, (radius - 100) / 400)));
+  return (
+    <View style={styles.glyph} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+      <View style={[styles.ring, { width: size, height: size, borderRadius: size / 2 }]}>
+        <View style={styles.center} />
+      </View>
+    </View>
+  );
+}
+
 export default function PlacesScreen() {
   const styles = useStyles();
   const { colors } = useTheme();
@@ -38,13 +51,14 @@ export default function PlacesScreen() {
             onPress={() => router.push({ pathname: '/place-edit', params: { id: item.id } })}
             style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
           >
-            <Icon name="location" size={22} color={colors.accentText} />
+            <RadiusGlyph radius={item.radius} />
             <View style={{ flex: 1 }}>
               <Text style={styles.name}>{item.name}</Text>
               <Text style={styles.meta}>
-                {item.radius} m · {usage}
+                Radie {item.radius} m · {usage}
               </Text>
             </View>
+            {count > 0 && <Text style={styles.count}>{count}</Text>}
             <Icon name="chevron-forward" size={18} color={colors.textMuted} />
           </Pressable>
         );
@@ -79,6 +93,23 @@ const useStyles = makeStyles(({ colors }) => ({
   },
   name: { ...typography.headline, color: colors.textPrimary },
   meta: { ...typography.footnote, color: colors.textMuted },
+  count: { ...typography.callout, fontWeight: '700', color: colors.placeText, fontVariant: ['tabular-nums'] },
+  glyph: {
+    width: MIN_TOUCH,
+    height: MIN_TOUCH,
+    borderRadius: MIN_TOUCH / 2,
+    backgroundColor: colors.placeBg,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ring: {
+    borderWidth: 1.5,
+    borderStyle: 'dashed',
+    borderColor: colors.placeText,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  center: { width: 8, height: 8, borderRadius: 4, backgroundColor: colors.place },
   empty: { paddingVertical: spacing.xl },
   emptyText: { ...typography.body, color: colors.textSecondary, textAlign: 'center' },
 }));

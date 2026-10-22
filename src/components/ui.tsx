@@ -116,12 +116,15 @@ interface ChipProps {
   onPress: () => void;
   icon?: IconName;
   accessibilityHint?: string;
+  /** 'place': blå när vald, för platser. Tid och övriga val är orange. */
+  tone?: 'time' | 'place';
 }
 
-export function Chip({ label, selected, onPress, icon, accessibilityHint }: ChipProps) {
+export function Chip({ label, selected, onPress, icon, accessibilityHint, tone = 'time' }: ChipProps) {
   const styles = useChipStyles();
   const { colors } = useTheme();
-  const fg = selected ? colors.onAccent : colors.textPrimary;
+  const isPlace = tone === 'place';
+  const fg = selected ? (isPlace ? colors.onPlace : colors.onAccent) : colors.textPrimary;
   return (
     <Pressable
       accessibilityRole="radio"
@@ -132,7 +135,11 @@ export function Chip({ label, selected, onPress, icon, accessibilityHint }: Chip
         Haptics.selectionAsync().catch(() => {});
         onPress();
       }}
-      style={({ pressed }) => [styles.chip, selected && styles.selected, pressed && { opacity: 0.8 }]}
+      style={({ pressed }) => [
+        styles.chip,
+        selected && (isPlace ? styles.selectedPlace : styles.selected),
+        pressed && { opacity: 0.8 },
+      ]}
     >
       {icon && <Icon name={icon} size={16} color={fg} />}
       <Text style={[styles.text, { color: fg }]}>{label}</Text>
@@ -153,6 +160,7 @@ const useChipStyles = makeStyles(({ colors }) => ({
     gap: 6,
   },
   selected: { backgroundColor: colors.accent, borderColor: colors.accent },
+  selectedPlace: { backgroundColor: colors.place, borderColor: colors.place },
   text: { ...typography.footnote, fontWeight: '600' },
 }));
 
