@@ -28,6 +28,12 @@ describe('summarize', () => {
     expect(parts.find((p) => p.tone === 'place')?.text).toBe('lämnar Jobbet');
   });
 
+  it('säger till när en engångstid har passerat', () => {
+    expect(text(summarize({ triggerType: 'TIME', at: new Date(2026, 9, 22, 9), repeat: 'NONE', placeName: null }, now))).toBe(
+      'Tiden har passerat – välj en tid framåt.'
+    );
+  });
+
   it('platslarm, med och utan vald plats', () => {
     const at = new Date(2026, 9, 30, 16);
     expect(text(summarize({ triggerType: 'ENTER_LOCATION', at, repeat: 'NONE', placeName: 'ICA' }, now))).toBe(

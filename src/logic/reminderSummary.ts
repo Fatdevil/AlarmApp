@@ -33,6 +33,11 @@ export function summarize(input: SummaryInput, now: Date = new Date()): SummaryP
     return [{ text: 'Påminner när du ' }, { text: direction(triggerType, placeName), tone: 'place' }, { text: '.' }];
   }
 
+  // Engångstid som redan passerat (eller passerar medan formuläret är öppet) går inte att spara
+  if (repeat === 'NONE' && at.getTime() <= now.getTime()) {
+    return [{ text: 'Tiden har passerat – välj en tid framåt.' }];
+  }
+
   const when =
     repeat === 'NONE'
       ? // "fre 30 okt." → "fre 30 okt" så att meningens egen punkt inte blir dubbel

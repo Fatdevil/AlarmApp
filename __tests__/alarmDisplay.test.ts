@@ -1,5 +1,6 @@
 import {
   alarmKind,
+  finishedLabel,
   pickNext,
   placeLine,
   rowDetails,
@@ -56,7 +57,9 @@ describe('rader', () => {
   });
 
   it('detaljer: upprepning, plats, checklista, väntande', () => {
-    expect(rowDetails(alarm({ repeat: 'WEEKDAYS' }), now)).toEqual(['Vardagar']);
+    expect(rowDetails(alarm({ repeat: 'WEEKDAYS' }), now)).toEqual(['om 4 tim', 'Vardagar']);
+    const tomorrow = alarm({ dateTime: new Date(2026, 9, 23, 9).toISOString() });
+    expect(rowDetails(tomorrow, now)).toEqual([]);
     expect(
       rowDetails(
         place({
@@ -67,8 +70,11 @@ describe('rader', () => {
         }),
         now
       )
-    ).toEqual(['När du lämnar Jobbet', '1 av 2']);
-    expect(rowDetails(alarm({ notificationIds: [] }), now)).toEqual(['läggs in när appen öppnas närmare tiden']);
+    ).toEqual(['När du lämnar Jobbet', '150 m', '1 av 2']);
+    expect(rowDetails(alarm({ notificationIds: [] }), now)).toEqual([
+      'om 4 tim',
+      'läggs in när appen öppnas närmare tiden',
+    ]);
   });
 
   it('uppföljningen visas bara före sin tid', () => {
@@ -92,5 +98,13 @@ describe('pickNext', () => {
 
   it('ingen när inget ringer vid en tid', () => {
     expect(pickNext([place(), alarm({ status: 'DONE' })], now)).toBeNull();
+  });
+});
+
+describe('finishedLabel', () => {
+  it('skiljer klar från avbruten', () => {
+    expect(finishedLabel(alarm({ status: 'DONE' }))).toBe('Klar');
+    expect(finishedLabel(alarm({ status: 'CANCELLED' }))).toBe('Avbrutet');
+    expect(finishedLabel(alarm())).toBeNull();
   });
 });

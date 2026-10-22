@@ -3,8 +3,9 @@ import React, { useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, SectionList, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { SettingsButton } from '../../src/components/SettingsButton';
 import { Button, Icon } from '../../src/components/ui';
-import { followUpLine } from '../../src/logic/followUp';
+import { followUpLine, hasTimeReminder } from '../../src/logic/followUp';
 import { addDays, AgendaItem, buildAgenda, dayKey, parseDayKey } from '../../src/logic/agenda';
 import { formatAgendaDay, formatClock, LOCALE, REPEAT_LABELS } from '../../src/logic/time';
 import { useAlarms } from '../../src/state/useAlarms';
@@ -52,7 +53,7 @@ export default function AgendaScreen() {
   const busy = useMemo(
     () =>
       new Map(
-        agenda.days.map((d) => [d.key, { followUp: d.items.some((i) => followUpLine(i.alarm) !== null) }])
+        agenda.days.map((d) => [d.key, { followUp: d.items.some((i) => hasTimeReminder(i.alarm)) }])
       ),
     [agenda]
   );
@@ -257,7 +258,7 @@ export default function AgendaScreen() {
         onScrollToIndexFailed={handleScrollFailed}
         ListHeaderComponent={
           <>
-            <ScreenHeader title="Agenda" subtitle={monthTitle} />
+            <ScreenHeader title="Agenda" subtitle={monthTitle} right={<SettingsButton />} />
             <FlatList
               horizontal
               data={strip}

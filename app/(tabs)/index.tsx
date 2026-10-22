@@ -1,5 +1,5 @@
 import * as Haptics from 'expo-haptics';
-import { Link, useLocalSearchParams, useRouter } from 'expo-router';
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, SectionList, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,6 +8,7 @@ import { AlarmRow } from '../../src/components/AlarmRow';
 import { NextCard } from '../../src/components/NextCard';
 import { PermissionBanner } from '../../src/components/PermissionBanner';
 import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { SettingsButton } from '../../src/components/SettingsButton';
 import { Button, Icon } from '../../src/components/ui';
 import { useSnackbar } from '../../src/components/UndoSnackbar';
 import { pickNext } from '../../src/logic/alarmDisplay';
@@ -28,18 +29,6 @@ const dateFormat = new Intl.DateTimeFormat(LOCALE, { weekday: 'long', day: 'nume
 const CARD_SECTIONS: SectionKey[] = ['requests', 'attention'];
 
 type Section = AlarmSection & { count: number };
-
-function SettingsButton() {
-  const styles = useStyles();
-  const { colors } = useTheme();
-  return (
-    <Link href="/settings" asChild>
-      <Pressable accessibilityRole="button" accessibilityLabel="Inställningar" hitSlop={4} style={styles.roundButton}>
-        <Icon name="settings-outline" size={22} color={colors.textSecondary} />
-      </Pressable>
-    </Link>
-  );
-}
 
 export default function RemindersScreen() {
   const styles = useStyles();
@@ -82,12 +71,18 @@ export default function RemindersScreen() {
   const scrolledToken = useRef<string | null>(null);
   useEffect(() => {
     if (!highlighted || scrolledToken.current === focusToken) return;
+    // "Nästa" ligger överst i listhuvudet, inte i någon sektion
+    if (highlighted === next?.id) {
+      scrolledToken.current = focusToken;
+      listRef.current?.getScrollResponder()?.scrollTo({ y: 0, animated: true });
+      return;
+    }
     const sectionIndex = sections.findIndex((s) => s.data.some((a) => a.id === highlighted));
     if (sectionIndex < 0) return;
     scrolledToken.current = focusToken;
     const itemIndex = sections[sectionIndex].data.findIndex((a) => a.id === highlighted);
     listRef.current?.scrollToLocation({ sectionIndex, itemIndex, viewOffset: 80, animated: true });
-  }, [highlighted, focusToken, sections]);
+  }, [highlighted, focusToken, sections, next]);
 
   const runWithUndo = async (
     action: (id: string) => Promise<LocalAlarm | null>,
@@ -149,7 +144,16 @@ export default function RemindersScreen() {
           <>
             <ScreenHeader title="Påminnelser" subtitle={subtitle} right={<SettingsButton />} />
             <PermissionBanner permissions={permissions} alarms={alarms} onChanged={refreshPermissions} />
-            {next && <NextCard alarm={next} now={now} highlighted={next.id === highlighted} onComplete={complete} />}
+            {next && (
+              <NextCard
+                alarm={next}
+                now={now}
+                highlighted={next.id === highlighted}
+                onToggleChecklist={toggleItem}
+                onComplete={complete}
+                onDelete={remove}
+              />
+            )}
           </>
         }
         renderSectionHeader={({ section }) =>
@@ -232,14 +236,6 @@ export default function RemindersScreen() {
 const useStyles = makeStyles(({ colors, dark }) => ({
   screen: { flex: 1, backgroundColor: colors.background },
   list: { paddingHorizontal: spacing.xl, flexGrow: 1 },
-  roundButton: {
-    width: MIN_TOUCH,
-    height: MIN_TOUCH,
-    borderRadius: MIN_TOUCH / 2,
-    backgroundColor: colors.surfaceHighlight,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
   sectionHeaderRow: {
     flexDirection: 'row',
     alignItems: 'center',

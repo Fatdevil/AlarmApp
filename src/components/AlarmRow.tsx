@@ -6,14 +6,16 @@ import React, { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import {
   alarmKind,
+  finishedLabel,
   rowDetails,
   rowFollowUp,
   shortDay,
   shownTime,
 } from '../logic/alarmDisplay';
 import { formatClock } from '../logic/time';
-import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../theme';
+import { makeStyles, radii, spacing, typography, useTheme } from '../theme';
 import { LocalAlarm } from '../types';
+import { ChecklistItems } from './ChecklistItems';
 import { SwipeActions } from './SwipeActions';
 import { Icon } from './ui';
 
@@ -34,7 +36,9 @@ export function AlarmRow({ alarm, now, highlighted, onToggleChecklist, onComplet
   const kind = alarmKind(alarm, now);
   const time = shownTime(alarm, now);
   const day = time ? shortDay(time, now) : null;
-  const details = rowDetails(alarm, now);
+  // "Klar"/"Avbrutet" först, så att avbrutna inte ser ut som klara
+  const finished = finishedLabel(alarm);
+  const details = [...(finished ? [finished] : []), ...rowDetails(alarm, now)];
   const followUp = rowFollowUp(alarm, now);
   const checklist = alarm.checklistItems ?? [];
   const isDone = alarm.status === 'DONE' || alarm.status === 'CANCELLED';
@@ -45,77 +49,65 @@ export function AlarmRow({ alarm, now, highlighted, onToggleChecklist, onComplet
     alarm.content,
     ...details,
     followUp,
-    isDone ? 'Klar' : null,
   ]
     .filter(Boolean)
     .join(', ');
 
   return (
     <SwipeActions canComplete={!isDone} onComplete={() => onComplete(alarm)} onDelete={() => onDelete(alarm)}>
-      <View style={[styles.container, highlighted && styles.highlighted]}>
-        <Pressable
-          accessibilityRole={checklist.length > 0 ? 'button' : undefined}
-          accessibilityLabel={label}
-          accessibilityState={checklist.length > 0 ? { expanded } : undefined}
-          accessibilityHint={checklist.length > 0 ? 'Visar checklistan' : undefined}
-          accessibilityActions={[
-            ...(!isDone ? [{ name: 'complete', label: 'Markera som klar' }] : []),
-            { name: 'delete', label: 'Radera' },
-          ]}
-          onAccessibilityAction={(e) => {
-            if (e.nativeEvent.actionName === 'complete') onComplete(alarm);
-            if (e.nativeEvent.actionName === 'delete') onDelete(alarm);
-          }}
-          // Inte disabled utan checklista: då läses raden upp som nedtonad och åtgärderna nås inte
-          onPress={checklist.length > 0 ? () => setExpanded((v) => !v) : undefined}
-          style={[styles.row, isDone && styles.done]}
-        >
-          <View style={styles.lead}>
-            {kind === 'time' && time ? (
-              <>
-                <Text style={styles.clock}>{formatClock(time)}</Text>
-                {day && <Text style={styles.day}>{day}</Text>}
-              </>
-            ) : (
-              <Icon name={enter ? 'enter-outline' : 'exit-outline'} size={22} color={colors.placeText} />
-            )}
-          </View>
-          <View style={styles.body}>
-            <Text style={[styles.content, isDone && styles.strike]} numberOfLines={2}>
-              {alarm.content}
-            </Text>
-            {details.length > 0 && <Text style={styles.details}>{details.join(' · ')}</Text>}
-            {followUp && (
-              <View style={styles.followUp}>
-                <Icon name={enter ? 'enter-outline' : 'exit-outline'} size={14} color={colors.placeText} />
-                <Text style={styles.followUpText}>{followUp}</Text>
-              </View>
-            )}
-          </View>
-          {checklist.length > 0 && (
-            <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
-          )}
-        </Pressable>
-
-        {expanded && (
-          <View style={styles.checklist}>
-            {checklist.map((item) => (
-              <Pressable
-                key={item.id}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: item.done }}
-                accessibilityLabel={item.text}
-                onPress={() => onToggleChecklist(alarm.id, item.id)}
-                style={styles.checkRow}
-              >
-                <View style={[styles.checkbox, item.done && styles.checkboxOn]}>
-                  {item.done && <Icon name="checkmark" size={14} color={colors.onAccent} />}
+      {/* Ogenomskinlig botten så att svepåtgärderna inte syns igenom markeringen */}
+      <View style={styles.container}>
+        <View style={highlighted ? styles.highlighted : undefined}>
+          <Pressable
+            accessibilityRole={checklist.length > 0 ? 'button' : undefined}
+            accessibilityLabel={label}
+            accessibilityState={checklist.length > 0 ? { expanded } : undefined}
+            accessibilityHint={checklist.length > 0 ? 'Visar checklistan' : undefined}
+            accessibilityActions={[
+              ...(!isDone ? [{ name: 'complete', label: 'Markera som klar' }] : []),
+              { name: 'delete', label: 'Radera' },
+            ]}
+            onAccessibilityAction={(e) => {
+              if (e.nativeEvent.actionName === 'complete') onComplete(alarm);
+              if (e.nativeEvent.actionName === 'delete') onDelete(alarm);
+            }}
+            // Inte disabled utan checklista: då läses raden upp som nedtonad och åtgärderna nås inte
+            onPress={checklist.length > 0 ? () => setExpanded((v) => !v) : undefined}
+            style={[styles.row, isDone && styles.done]}
+          >
+            <View style={styles.lead}>
+              {kind === 'time' && time ? (
+                <>
+                  <Text style={styles.clock}>{formatClock(time)}</Text>
+                  {day && <Text style={styles.day}>{day}</Text>}
+                </>
+              ) : (
+                <Icon name={enter ? 'enter-outline' : 'exit-outline'} size={22} color={colors.placeText} />
+              )}
+            </View>
+            <View style={styles.body}>
+              <Text style={[styles.content, isDone && styles.strike]} numberOfLines={2}>
+                {alarm.content}
+              </Text>
+              {details.length > 0 && <Text style={styles.details}>{details.join(' · ')}</Text>}
+              {followUp && (
+                <View style={styles.followUp}>
+                  <Icon name={enter ? 'enter-outline' : 'exit-outline'} size={14} color={colors.placeText} />
+                  <Text style={styles.followUpText}>{followUp}</Text>
                 </View>
-                <Text style={[styles.checkText, item.done && styles.strike]}>{item.text}</Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
+              )}
+            </View>
+            {checklist.length > 0 && (
+              <Icon name={expanded ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
+            )}
+          </Pressable>
+
+          {expanded && (
+            <View style={styles.checklist}>
+              <ChecklistItems alarmId={alarm.id} items={checklist} onToggle={onToggleChecklist} />
+            </View>
+          )}
+        </View>
       </View>
     </SwipeActions>
   );
@@ -160,16 +152,4 @@ const useStyles = makeStyles(({ colors }) => ({
     borderRadius: radii.md,
     backgroundColor: colors.surface,
   },
-  checkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: MIN_TOUCH },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: colors.borderStrong,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxOn: { backgroundColor: colors.accent, borderColor: colors.accent },
-  checkText: { ...typography.body, color: colors.textPrimary, flex: 1 },
 }));

@@ -56,7 +56,7 @@ describe('AlarmRow', () => {
         onDelete={noop}
       />
     );
-    expect(screen.getByText('När du kommer till Jobbet')).toBeTruthy();
+    expect(screen.getByText('När du kommer till Jobbet · 150 m')).toBeTruthy();
     expect(screen.queryByText('16:00')).toBeNull();
   });
 
@@ -85,12 +85,39 @@ describe('AlarmRow', () => {
 describe('NextCard', () => {
   it('visar nästa påminnelse stort och kan markeras klar', async () => {
     const complete = jest.fn();
-    await render(<NextCard alarm={alarm()} now={now} onComplete={complete} />);
+    await render(
+      <NextCard alarm={alarm()} now={now} onToggleChecklist={noop} onComplete={complete} onDelete={noop} />
+    );
     expect(screen.getByText('NÄSTA')).toBeTruthy();
     expect(screen.getByText('16:00')).toBeTruthy();
     expect(screen.getByText('om 1 dag')).toBeTruthy();
     await fireEvent.press(screen.getByText('Klar'));
     expect(complete).toHaveBeenCalledWith(expect.objectContaining({ id: 'a' }));
+  });
+});
+
+describe('NextCard – tillgänglighet och checklista', () => {
+  it('kan raderas via skärmläsaråtgärd och har sin checklista', async () => {
+    const remove = jest.fn();
+    const toggle = jest.fn();
+    const withList = alarm({ checklistItems: [{ id: 'i1', text: 'Tulpaner', done: false }] });
+    await render(<NextCard alarm={withList} now={now} onToggleChecklist={toggle} onComplete={noop} onDelete={remove} />);
+    await fireEvent(screen.getByLabelText(/^Nästa: Köp blommor/), 'accessibilityAction', {
+      nativeEvent: { actionName: 'delete' },
+    });
+    expect(remove).toHaveBeenCalledTimes(1);
+    await fireEvent.press(screen.getByText('Tulpaner'));
+    expect(toggle).toHaveBeenCalledWith('a', 'i1');
+  });
+});
+
+describe('AlarmRow – slutstatus', () => {
+  it('skiljer avbrutna från klara', async () => {
+    await render(
+      <AlarmRow alarm={alarm({ status: 'CANCELLED' })} now={now} onToggleChecklist={noop} onComplete={noop} onDelete={noop} />
+    );
+    expect(screen.getByText(/Avbrutet/)).toBeTruthy();
+    expect(screen.queryByText(/^Klar/)).toBeNull();
   });
 });
 

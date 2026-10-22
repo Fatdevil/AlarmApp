@@ -1,6 +1,7 @@
 import React from 'react';
-import { Pressable, Text, View } from 'react-native';
-import { followUpLine, hasTimeReminder, isZoneArmed } from '../logic/followUp';
+import { Text, View } from 'react-native';
+import { alarmKind, rowFollowUp, shownTime } from '../logic/alarmDisplay';
+import { isZoneArmed } from '../logic/followUp';
 import { LocalAlarm } from '../types';
 import {
   formatClock,
@@ -9,7 +10,8 @@ import {
   nextOccurrence,
   REPEAT_LABELS,
 } from '../logic/time';
-import { makeStyles, MIN_TOUCH, radii, spacing, typography, useTheme } from '../theme';
+import { makeStyles, radii, spacing, typography, useTheme } from '../theme';
+import { ChecklistItems, checklistProgress } from './ChecklistItems';
 import { SwipeActions } from './SwipeActions';
 import { Button, Icon, IconName } from './ui';
 
@@ -31,26 +33,19 @@ interface Headline {
 }
 
 function describe(alarm: LocalAlarm, now: Date): Headline {
-  if (alarm.triggerType === 'TIME' && alarm.dateTime) {
-    const next = nextOccurrence(alarm.dateTime, alarm.repeat, now);
-    const shown = next ?? new Date(alarm.dateTime);
-    const repeat = alarm.repeat && alarm.repeat !== 'NONE' ? ` · ${REPEAT_LABELS[alarm.repeat]}` : '';
+  const time = shownTime(alarm, now);
+  if (alarmKind(alarm, now) === 'time' && time) {
+    const extras = [
+      alarm.repeat && alarm.repeat !== 'NONE' ? REPEAT_LABELS[alarm.repeat] : null,
+      rowFollowUp(alarm, now),
+    ].filter(Boolean);
     return {
       icon: 'alarm-outline',
-      title: formatClock(shown),
-      subtitle: `${formatDayLabel(shown, now)}${repeat}`,
+      title: formatClock(time),
+      subtitle: [formatDayLabel(time, now), ...extras].join(' · '),
     };
   }
   const place = alarm.location?.name ?? 'Plats';
-  // Uppföljning: först en tid, sedan platsen
-  if (hasTimeReminder(alarm) && !isZoneArmed(alarm, now)) {
-    const at = new Date(alarm.dateTime!);
-    return {
-      icon: 'alarm-outline',
-      title: formatClock(at),
-      subtitle: `${formatDayLabel(at, now)} · ${followUpLine(alarm)}`,
-    };
-  }
   return alarm.triggerType === 'ENTER_LOCATION'
     ? { icon: 'enter-outline', title: place, subtitle: 'När du kommer fram' }
     : { icon: 'exit-outline', title: place, subtitle: 'När du lämnar' };
@@ -103,7 +98,6 @@ export function AlarmCard({
   const head = describe(alarm, now);
   const status = statusText(alarm, now);
   const checklist = alarm.checklistItems ?? [];
-  const doneCount = checklist.filter((i) => i.done).length;
   const isDone = alarm.status === 'DONE' || alarm.status === 'CANCELLED';
   const isRequest = alarm.status === 'PENDING_ACCEPTANCE';
   const needsAttention = alarm.status === 'FIRED_LOCALLY' || alarm.status === 'MISSED';
@@ -152,24 +146,8 @@ export function AlarmCard({
 
           {checklist.length > 0 && (
             <View style={styles.checklist}>
-              <Text style={styles.checklistProgress}>
-                {doneCount} av {checklist.length} klara
-              </Text>
-              {checklist.map((item) => (
-                <Pressable
-                  key={item.id}
-                  accessibilityRole="checkbox"
-                  accessibilityState={{ checked: item.done }}
-                  accessibilityLabel={item.text}
-                  onPress={() => onToggleChecklist(alarm.id, item.id)}
-                  style={styles.checkRow}
-                >
-                  <View style={[styles.checkbox, item.done && styles.checkboxOn]}>
-                    {item.done && <Icon name="checkmark" size={14} color={colors.onAccent} />}
-                  </View>
-                  <Text style={[styles.checkText, item.done && styles.strike]}>{item.text}</Text>
-                </Pressable>
-              ))}
+              <Text style={styles.checklistProgress}>{checklistProgress(checklist)} klara</Text>
+              <ChecklistItems alarmId={alarm.id} items={checklist} onToggle={onToggleChecklist} />
             </View>
           )}
 
@@ -235,18 +213,6 @@ const useStyles = makeStyles(({ colors }) => ({
     paddingVertical: spacing.xs,
   },
   checklistProgress: { ...typography.footnote, color: colors.textMuted, paddingTop: spacing.sm },
-  checkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, minHeight: MIN_TOUCH },
-  checkbox: {
-    width: 22,
-    height: 22,
-    borderRadius: 6,
-    borderWidth: 2,
-    borderColor: colors.borderStrong,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  checkboxOn: { backgroundColor: colors.accent, borderColor: colors.accent },
-  checkText: { ...typography.body, color: colors.textPrimary, flex: 1 },
   status: { ...typography.footnote, color: colors.textMuted },
   actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: spacing.sm },
 }));

@@ -5,7 +5,7 @@
 import { LocalAlarm } from '../types';
 import { followUpLine, hasTimeReminder, isZoneArmed } from './followUp';
 import { nextTimedRing } from './notificationBudget';
-import { formatDayLabel, REPEAT_LABELS } from './time';
+import { formatCountdown, formatDayLabel, isSameDay, REPEAT_LABELS } from './time';
 
 export type AlarmKind = 'time' | 'place';
 
@@ -33,19 +33,30 @@ export function placeLine(alarm: LocalAlarm): string | null {
 /** Kortare uppgifter under texten, i den ordning de visas. */
 export function rowDetails(alarm: LocalAlarm, now: Date): string[] {
   const details: string[] = [];
+  // Nedräkning för det som ringer idag ("om 2 tim"); senare dagar visar dagen under klockslaget
+  const next = nextTimedRing(alarm, now);
+  if (next && isSameDay(next, now)) details.push(formatCountdown(next, now));
   if (alarm.repeat && alarm.repeat !== 'NONE') details.push(REPEAT_LABELS[alarm.repeat]);
   if (alarmKind(alarm, now) === 'place') {
     const line = placeLine(alarm);
     if (line) details.push(line);
+    if (alarm.status === 'ACTIVE_GEOFENCE' && alarm.location) details.push(`${alarm.location.radius} m`);
   }
   const items = alarm.checklistItems ?? [];
   if (items.length > 0) details.push(`${items.filter((i) => i.done).length} av ${items.length}`);
   if (alarm.status === 'MISSED') details.push('Missat – kunde inte schemaläggas');
   // iOS utan systemlarm: ligger inte i telefonens schema än (se services/notificationBudget.ts)
-  if (nextTimedRing(alarm, now) && !alarm.notificationIds?.length) {
+  if (next && !alarm.notificationIds?.length) {
     details.push('läggs in när appen öppnas närmare tiden');
   }
   return details;
+}
+
+/** Slutstatus som läses upp och visas för klara och avbrutna påminnelser. */
+export function finishedLabel(alarm: LocalAlarm): string | null {
+  if (alarm.status === 'DONE') return 'Klar';
+  if (alarm.status === 'CANCELLED') return 'Avbrutet';
+  return null;
 }
 
 /** Uppföljningen som visas i blått under en tidspåminnelse, om den har en. */
