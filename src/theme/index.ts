@@ -14,9 +14,17 @@ export interface Palette {
   border: string;
   borderStrong: string;
 
-  accent: string; // Primär interaktionsfärg (knappar, valda chips)
+  /** Tid och primära handlingar: signalorange. */
+  accent: string; // Fyllning (knappar, valda chips, tidsprickar)
   onAccent: string; // Text på accent
-  accentText: string; // Accentfärgad text på background/surface
+  accentText: string; // Orange text på background/surface (klockslag, länkar)
+  accentBg: string; // Svag orange ton bakom valda val
+  /** Plats: himmelsblå. Visas alltid tillsammans med en ikon, aldrig bara som färg. */
+  place: string;
+  onPlace: string;
+  placeText: string;
+  placeBg: string;
+
   success: string;
   warning: string;
   warningBg: string;
@@ -28,48 +36,61 @@ export interface Palette {
   textMuted: string;
 }
 
+// Mörkt först: larm används ofta kväll och natt
 const dark: Palette = {
-  background: '#090D16',
-  surface: '#131B2B',
-  surfaceElevated: '#1C263D',
-  surfaceHighlight: '#263450',
-  border: 'rgba(255, 255, 255, 0.10)',
-  borderStrong: 'rgba(255, 255, 255, 0.22)',
+  background: '#0B0C10',
+  surface: '#15171D',
+  surfaceElevated: '#1D2028',
+  surfaceHighlight: '#262A33',
+  border: 'rgba(255, 255, 255, 0.08)',
+  borderStrong: 'rgba(255, 255, 255, 0.16)',
 
-  accent: '#2563EB',
-  onAccent: '#FFFFFF',
-  accentText: '#00E1EE',
+  accent: '#FF8A3D',
+  onAccent: '#1A1206',
+  accentText: '#FF9A52',
+  accentBg: 'rgba(255, 138, 61, 0.12)',
+  place: '#3D8BF2',
+  onPlace: '#08182B',
+  placeText: '#7DBBFF',
+  placeBg: 'rgba(90, 169, 255, 0.14)',
+
   success: '#34D399',
   warning: '#FBBF24',
   warningBg: 'rgba(245, 158, 11, 0.14)',
   danger: '#FB7185',
   dangerBg: 'rgba(244, 63, 94, 0.14)',
 
-  textPrimary: '#F8FAFC',
-  textSecondary: '#B4C0D3',
-  textMuted: '#8B9AB1',
+  textPrimary: '#F2F3F5',
+  textSecondary: '#A7ADBA',
+  textMuted: '#8A91A0',
 };
 
 const light: Palette = {
-  background: '#F4F6FB',
+  background: '#F5F6F8',
   surface: '#FFFFFF',
   surfaceElevated: '#FFFFFF',
-  surfaceHighlight: '#E8EDF7',
-  border: 'rgba(15, 23, 42, 0.10)',
-  borderStrong: 'rgba(15, 23, 42, 0.22)',
+  surfaceHighlight: '#E9EBF0',
+  border: 'rgba(17, 19, 24, 0.08)',
+  borderStrong: 'rgba(17, 19, 24, 0.18)',
 
-  accent: '#2563EB',
-  onAccent: '#FFFFFF',
-  accentText: '#1D4ED8',
+  accent: '#F97316',
+  onAccent: '#1A1206',
+  accentText: '#C2410C',
+  accentBg: 'rgba(249, 115, 22, 0.10)',
+  place: '#1D6FD1',
+  onPlace: '#FFFFFF',
+  placeText: '#1D6FD1',
+  placeBg: 'rgba(29, 111, 209, 0.10)',
+
   success: '#047857',
   warning: '#B45309',
   warningBg: 'rgba(245, 158, 11, 0.14)',
   danger: '#BE123C',
   dangerBg: 'rgba(244, 63, 94, 0.10)',
 
-  textPrimary: '#0F172A',
-  textSecondary: '#334155',
-  textMuted: '#5B6778',
+  textPrimary: '#111318',
+  textSecondary: '#4A5160',
+  textMuted: '#626A79',
 };
 
 export const palettes = { dark, light };

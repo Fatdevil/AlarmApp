@@ -1,8 +1,11 @@
 import { useRouter } from 'expo-router';
 import React, { useMemo, useRef, useState } from 'react';
 import { FlatList, Pressable, SectionList, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ScreenHeader } from '../../src/components/ScreenHeader';
+import { SettingsButton } from '../../src/components/SettingsButton';
 import { Button, Icon } from '../../src/components/ui';
-import { followUpLine } from '../../src/logic/followUp';
+import { followUpLine, hasTimeReminder } from '../../src/logic/followUp';
 import { addDays, AgendaItem, buildAgenda, dayKey, parseDayKey } from '../../src/logic/agenda';
 import { formatAgendaDay, formatClock, LOCALE, REPEAT_LABELS } from '../../src/logic/time';
 import { useAlarms } from '../../src/state/useAlarms';
@@ -14,7 +17,8 @@ import { LocalAlarm } from '../../src/types';
 const STRIP_DAYS = 42;
 
 const weekdayFormat = new Intl.DateTimeFormat(LOCALE, { weekday: 'short' });
-const monthFormat = new Intl.DateTimeFormat(LOCALE, { month: 'short' });
+const monthFormat = new Intl.DateTimeFormat(LOCALE, { month: 'long', year: 'numeric' });
+const shortMonthFormat = new Intl.DateTimeFormat(LOCALE, { month: 'short' });
 
 /** Öppnar ett larm i Påminnelser. [at] gör att samma larm lyfts fram igen vid nästa tryck. */
 function focusParams(alarmId: string) {
@@ -37,13 +41,22 @@ export default function AgendaScreen() {
   const router = useRouter();
   const alarms = useAlarms();
   const now = useNow();
+  const insets = useSafeAreaInsets();
+  const month = monthFormat.format(now);
+  const monthTitle = month.charAt(0).toUpperCase() + month.slice(1);
   const listRef = useRef<SectionList<Row, Section>>(null);
   const [showPlaces, setShowPlaces] = useState(false);
 
   const todayKey = dayKey(now);
   const agenda = useMemo(() => buildAgenda(alarms, now), [alarms, now]);
   // Prickarna följer listan, så att en dag med prick alltid finns där
-  const busy = useMemo(() => new Set(agenda.days.map((d) => d.key)), [agenda]);
+  const busy = useMemo(
+    () =>
+      new Map(
+        agenda.days.map((d) => [d.key, { followUp: d.items.some((i) => hasTimeReminder(i.alarm)) }])
+      ),
+    [agenda]
+  );
   // Byggs om bara när dagen byts, inte varje halvminut
   const strip = useMemo(() => {
     const start = parseDayKey(todayKey)!;
@@ -116,13 +129,16 @@ export default function AgendaScreen() {
         style={({ pressed }) => [styles.stripDay, isToday && styles.stripToday, pressed && { opacity: 0.7 }]}
       >
         <Text style={[styles.stripMonth, isToday && styles.stripTodayText]}>
-          {showMonth ? monthFormat.format(date).replace('.', '') : ' '}
+          {showMonth ? shortMonthFormat.format(date).replace('.', '') : ' '}
         </Text>
         <Text style={[styles.stripWeekday, isToday && styles.stripTodayText]}>
           {weekdayFormat.format(date).replace('.', '')}
         </Text>
         <Text style={[styles.stripDate, isToday && styles.stripTodayText]}>{date.getDate()}</Text>
-        <View style={[styles.dot, hasAlarms && { backgroundColor: isToday ? colors.onAccent : colors.accentText }]} />
+        <View style={styles.dots}>
+          <View style={[styles.dot, hasAlarms && { backgroundColor: isToday ? colors.onAccent : colors.accent }]} />
+          {busy.get(key)?.followUp && <View style={[styles.dot, { backgroundColor: colors.place }]} />}
+        </View>
       </Pressable>
     );
   };
@@ -140,7 +156,7 @@ export default function AgendaScreen() {
           style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]}
         >
           <View style={styles.rowLead}>
-            <Icon name={enter ? 'enter-outline' : 'exit-outline'} size={20} color={colors.accentText} />
+            <Icon name={enter ? 'enter-outline' : 'exit-outline'} size={22} color={colors.placeText} />
           </View>
           <View style={styles.rowBody}>
             <Text style={styles.rowTitle} numberOfLines={2}>
@@ -184,9 +200,9 @@ export default function AgendaScreen() {
               <Icon
                 name={alarm.triggerType === 'ENTER_LOCATION' ? 'enter-outline' : 'exit-outline'}
                 size={14}
-                color={colors.textMuted}
+                color={colors.placeText}
               />
-              <Text style={styles.rowMeta}>{followUp}</Text>
+              <Text style={[styles.rowMeta, { color: colors.placeText }]}>{followUp}</Text>
             </View>
           )}
         </View>
@@ -202,12 +218,11 @@ export default function AgendaScreen() {
           accessibilityState={{ expanded: showPlaces }}
           accessibilityLabel={`${section.title}, ${section.count} st`}
           onPress={() => setShowPlaces((v) => !v)}
-          style={styles.header}
+          style={styles.placesHeader}
         >
-          <Icon name="location-outline" size={18} color={colors.textSecondary} />
-          <Text style={[styles.headerText, { flex: 1 }]}>
-            {section.title} ({section.count})
-          </Text>
+          <Icon name="location-outline" size={20} color={colors.placeText} />
+          <Text style={[styles.placesText, { flex: 1 }]}>{section.title}</Text>
+          <Text style={styles.placesCount}>{section.count}</Text>
           <Icon name={showPlaces ? 'chevron-up' : 'chevron-down'} size={18} color={colors.textMuted} />
         </Pressable>
       );
@@ -236,21 +251,23 @@ export default function AgendaScreen() {
     <View style={styles.screen}>
       <SectionList
         ref={listRef}
-        contentInsetAdjustmentBehavior="automatic"
         sections={sections}
         keyExtractor={(row) => (row.kind === 'time' ? `${row.item.alarm.id}@${row.item.at.getTime()}` : row.alarm.id)}
         stickySectionHeadersEnabled={false}
-        contentContainerStyle={styles.list}
+        contentContainerStyle={[styles.list, { paddingTop: insets.top + spacing.lg }]}
         onScrollToIndexFailed={handleScrollFailed}
         ListHeaderComponent={
-          <FlatList
-            horizontal
-            data={strip}
-            keyExtractor={dayKey}
-            renderItem={renderStripDay}
-            showsHorizontalScrollIndicator={false}
-            contentContainerStyle={styles.strip}
-          />
+          <>
+            <ScreenHeader title="Agenda" subtitle={monthTitle} right={<SettingsButton />} />
+            <FlatList
+              horizontal
+              data={strip}
+              keyExtractor={dayKey}
+              renderItem={renderStripDay}
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.strip}
+            />
+          </>
         }
         renderSectionHeader={renderSectionHeader}
         renderItem={renderRow}
@@ -280,8 +297,8 @@ export default function AgendaScreen() {
 
 const useStyles = makeStyles(({ colors }) => ({
   screen: { flex: 1, backgroundColor: colors.background },
-  list: { paddingHorizontal: spacing.lg, paddingBottom: spacing.xl, flexGrow: 1 },
-  strip: { gap: spacing.xs, paddingVertical: spacing.sm },
+  list: { paddingHorizontal: spacing.xl, paddingBottom: spacing.xl, flexGrow: 1 },
+  strip: { gap: spacing.xs, paddingBottom: spacing.md },
   stripDay: {
     width: 52,
     minHeight: 76,
@@ -289,14 +306,28 @@ const useStyles = makeStyles(({ colors }) => ({
     alignItems: 'center',
     justifyContent: 'center',
     gap: 2,
-    backgroundColor: colors.surface,
   },
   stripToday: { backgroundColor: colors.accent },
   stripMonth: { ...typography.footnote, fontSize: 11, color: colors.textMuted, textTransform: 'uppercase' },
   stripWeekday: { ...typography.footnote, color: colors.textSecondary },
   stripDate: { ...typography.headline, color: colors.textPrimary },
   stripTodayText: { color: colors.onAccent },
+  dots: { flexDirection: 'row', gap: 3, height: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: 'transparent' },
+  placesHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    minHeight: 52,
+    marginTop: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radii.md,
+    borderWidth: 1,
+    borderColor: colors.placeBg,
+    backgroundColor: colors.placeBg,
+  },
+  placesText: { ...typography.callout, fontWeight: '600', color: colors.textPrimary },
+  placesCount: { ...typography.callout, fontWeight: '700', color: colors.placeText, fontVariant: ['tabular-nums'] },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -304,7 +335,7 @@ const useStyles = makeStyles(({ colors }) => ({
     minHeight: MIN_TOUCH,
     marginTop: spacing.sm,
   },
-  headerText: { ...typography.headline, color: colors.textSecondary },
+  headerText: { ...typography.headline, fontSize: 15, fontWeight: '700', color: colors.textPrimary },
   headerAdd: { minWidth: MIN_TOUCH, minHeight: MIN_TOUCH, alignItems: 'center', justifyContent: 'center' },
   row: {
     flexDirection: 'row',
@@ -312,17 +343,14 @@ const useStyles = makeStyles(({ colors }) => ({
     gap: spacing.md,
     minHeight: MIN_TOUCH + 12,
     paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    marginBottom: spacing.xs,
-    borderRadius: radii.md,
-    backgroundColor: colors.surface,
-    borderWidth: 1,
-    borderColor: colors.border,
+    paddingHorizontal: spacing.xs,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
   },
-  rowLead: { width: 52, alignItems: 'flex-start' },
-  rowTime: { ...typography.callout, fontWeight: '700', color: colors.textPrimary, fontVariant: ['tabular-nums'] },
+  rowLead: { width: 56, alignItems: 'flex-start' },
+  rowTime: { ...typography.headline, fontWeight: '700', color: colors.accentText, fontVariant: ['tabular-nums'] },
   rowBody: { flex: 1, gap: 2 },
-  rowTitle: { ...typography.body, color: colors.textPrimary },
+  rowTitle: { ...typography.body, fontWeight: '500', color: colors.textPrimary },
   rowMeta: { ...typography.footnote, color: colors.textMuted },
   repeat: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   footnote: { ...typography.footnote, color: colors.textMuted, textAlign: 'center', marginTop: spacing.lg },

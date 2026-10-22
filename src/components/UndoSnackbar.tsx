@@ -86,7 +86,7 @@ const useStyles = makeStyles(({ colors, dark }) => ({
   bar: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: dark ? '#E2E8F0' : '#1E293B',
+    backgroundColor: dark ? '#E9EBF0' : '#1D2028',
     borderRadius: radii.md,
     paddingLeft: spacing.lg,
     paddingRight: spacing.xs,
@@ -97,7 +97,7 @@ const useStyles = makeStyles(({ colors, dark }) => ({
     shadowOffset: { width: 0, height: 4 },
     elevation: 6,
   },
-  text: { ...typography.footnote, flex: 1, color: dark ? '#0F172A' : '#F8FAFC' },
+  text: { ...typography.footnote, flex: 1, color: dark ? '#111318' : '#F2F3F5' },
   undo: { minHeight: MIN_TOUCH, minWidth: MIN_TOUCH, paddingHorizontal: spacing.md, justifyContent: 'center' },
-  undoText: { ...typography.callout, fontWeight: '800', color: dark ? '#1D4ED8' : '#93C5FD' },
+  undoText: { ...typography.callout, fontWeight: '800', color: dark ? '#C2410C' : '#FF9A52' },
 }));

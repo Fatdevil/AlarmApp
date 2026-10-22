@@ -20,6 +20,7 @@ describe.each(Object.entries(palettes))('%s tema uppfyller WCAG AA', (_, p) => {
     textSecondary: p.textSecondary,
     textMuted: p.textMuted,
     accentText: p.accentText,
+    placeText: p.placeText,
     danger: p.danger,
     warning: p.warning,
     success: p.success,
@@ -35,5 +36,14 @@ describe.each(Object.entries(palettes))('%s tema uppfyller WCAG AA', (_, p) => {
 
   it('text på accentknapp ≥ 4.5:1', () => {
     expect(contrast(p.onAccent, p.accent)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('text på platsknapp ≥ 4.5:1', () => {
+    expect(contrast(p.onPlace, p.place)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  it('tid och plats skiljer sig i ljushet, inte bara i nyans', () => {
+    // Färgblinda ska kunna skilja dem åt även utan ikonen (≥ 1.1:1)
+    expect(contrast(p.accent, p.place)).toBeGreaterThanOrEqual(1.1);
   });
 });

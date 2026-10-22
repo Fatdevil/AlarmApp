@@ -1,5 +1,5 @@
 /**
- * Välj en plats via adressökning eller nuvarande position. Används av "Nytt larm" och
+ * Välj en plats via adressökning eller nuvarande position. Används av "Ny påminnelse" och
  * "Mina platser". Positionen används bara på telefonen.
  */
 import * as Location from 'expo-location';

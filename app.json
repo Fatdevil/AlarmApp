@@ -64,7 +64,7 @@
         "expo-notifications",
         {
           "icon": "./assets/android-icon-monochrome.png",
-          "color": "#2563EB"
+          "color": "#FF8A3D"
         }
       ],
       [
@@ -73,7 +73,7 @@
           "android": {
             "datePicker": {
               "colorAccent": {
-                "light": "#2563EB"
+                "light": "#F97316"
               }
             }
           }

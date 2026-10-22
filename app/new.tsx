@@ -21,6 +21,7 @@ import {
   MAX_CONTENT_LENGTH,
 } from '../src/constants';
 import { suggestedTimeForDay } from '../src/logic/agenda';
+import { summarize } from '../src/logic/reminderSummary';
 import { newId } from '../src/logic/ids';
 import { locationFromPlace, MAX_PLACE_NAME_LENGTH, validatePlace } from '../src/logic/places';
 import {
@@ -78,6 +79,7 @@ export default function NewAlarmScreen() {
 
   // Checklista
   const [checklist, setChecklist] = useState<ChecklistItem[]>([]);
+  const [showChecklist, setShowChecklist] = useState(false);
   const [newItem, setNewItem] = useState('');
 
   const [isSaving, setIsSaving] = useState(false);
@@ -92,6 +94,20 @@ export default function NewAlarmScreen() {
   const preview = repeat === 'NONE' ? chosen : repeatingStart(chosen, repeat, now);
   const laterStartIgnored = chosen.getTime() > preview.getTime() && !isSameDay(chosen, preview);
   const isCustom = selection.kind === 'custom';
+
+  const summaryParts = summarize(
+    {
+      triggerType,
+      at: preview,
+      repeat,
+      placeName:
+        triggerType === 'TIME'
+          ? (followUpPlace?.name ?? null)
+          : (savedPlace?.name ?? (saveAsPlace && placeName.trim() ? placeName.trim() : (place?.name ?? null))),
+      followUpType: triggerType === 'TIME' && followUpPlace ? followUpType : null,
+    },
+    now
+  );
 
   const openCustomPicker = () => {
     const initial = resolveSelection(selection, new Date());
@@ -231,8 +247,8 @@ export default function NewAlarmScreen() {
   };
 
   const triggerOptions: { type: TriggerType; label: string; icon: 'alarm-outline' | 'enter-outline' | 'exit-outline' }[] = [
-    { type: 'TIME', label: 'Tid', icon: 'alarm-outline' },
-    { type: 'ENTER_LOCATION', label: 'Kommer till', icon: 'enter-outline' },
+    { type: 'TIME', label: 'Vid en tid', icon: 'alarm-outline' },
+    { type: 'ENTER_LOCATION', label: 'Kommer fram', icon: 'enter-outline' },
     { type: 'EXIT_LOCATION', label: 'Lämnar', icon: 'exit-outline' },
   ];
 
@@ -263,56 +279,72 @@ export default function NewAlarmScreen() {
         keyboardDismissMode="interactive"
       >
         <View style={styles.section}>
-          <SectionLabel>Vad vill du bli påmind om?</SectionLabel>
+          <SectionLabel>Vad?</SectionLabel>
           <TextInput
-            style={styles.input}
-            placeholder="T.ex. Köp havremjölk och kaffe"
+            style={styles.bigInput}
+            placeholder="T.ex. Köp blommor till mamma"
             placeholderTextColor={colors.textMuted}
             value={content}
             onChangeText={setContent}
             maxLength={MAX_CONTENT_LENGTH}
-            accessibilityLabel="Larmtext"
+            multiline
+            submitBehavior="blurAndSubmit"
+            accessibilityLabel="Vad vill du bli påmind om?"
             returnKeyType="done"
           />
-        </View>
-
-        <View style={styles.section}>
-          <SectionLabel>Checklista (valfritt)</SectionLabel>
-          {checklist.map((item) => (
-            <View key={item.id} style={styles.checkRow}>
-              <Icon name="ellipse-outline" size={16} color={colors.textMuted} />
-              <Text style={styles.checkText}>{item.text}</Text>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Ta bort ${item.text}`}
-                onPress={() => setChecklist((items) => items.filter((i) => i.id !== item.id))}
-                style={styles.iconButton}
-              >
-                <Icon name="close-circle" size={22} color={colors.textMuted} />
-              </Pressable>
-            </View>
-          ))}
-          <View style={styles.row}>
-            <TextInput
-              style={[styles.input, { flex: 1 }]}
-              placeholder="Lägg till punkt"
-              placeholderTextColor={colors.textMuted}
-              value={newItem}
-              onChangeText={setNewItem}
-              onSubmitEditing={addChecklistItem}
-              submitBehavior="submit"
-              returnKeyType="next"
-              accessibilityLabel="Ny checklistepunkt"
+          {!showChecklist && (
+            <Button
+              compact
+              variant="ghost"
+              icon="add"
+              title="Lägg till checklista"
+              onPress={() => setShowChecklist(true)}
+              style={{ alignSelf: 'flex-start', paddingHorizontal: 0 }}
             />
-            <Button compact variant="secondary" title="Lägg till" onPress={addChecklistItem} />
-          </View>
+          )}
         </View>
 
+        {showChecklist && (
+          <View style={styles.section}>
+            <SectionLabel>Checklista</SectionLabel>
+            {checklist.map((item) => (
+              <View key={item.id} style={styles.checkRow}>
+                <Icon name="ellipse-outline" size={16} color={colors.textMuted} />
+                <Text style={styles.checkText}>{item.text}</Text>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Ta bort ${item.text}`}
+                  onPress={() => setChecklist((items) => items.filter((i) => i.id !== item.id))}
+                  style={styles.iconButton}
+                >
+                  <Icon name="close-circle" size={22} color={colors.textMuted} />
+                </Pressable>
+              </View>
+            ))}
+            <View style={styles.row}>
+              <TextInput
+                style={[styles.input, { flex: 1 }]}
+                placeholder="Lägg till punkt"
+                placeholderTextColor={colors.textMuted}
+                value={newItem}
+                onChangeText={setNewItem}
+                onSubmitEditing={addChecklistItem}
+                submitBehavior="submit"
+                returnKeyType="next"
+                accessibilityLabel="Ny checklistepunkt"
+              />
+              <Button compact variant="secondary" title="Lägg till" onPress={addChecklistItem} />
+            </View>
+          </View>
+        )}
+
         <View style={styles.section}>
-          <SectionLabel>När ska det ringa?</SectionLabel>
-          <View style={styles.segmented} accessibilityRole="radiogroup">
+          <SectionLabel>När?</SectionLabel>
+          <View style={styles.tiles} accessibilityRole="radiogroup">
             {triggerOptions.map((opt) => {
               const selected = triggerType === opt.type;
+              const isPlace = opt.type !== 'TIME';
+              const tint = isPlace ? colors.placeText : colors.accentText;
               return (
                 <Pressable
                   key={opt.type}
@@ -323,10 +355,13 @@ export default function NewAlarmScreen() {
                     Haptics.selectionAsync().catch(() => {});
                     setTriggerType(opt.type);
                   }}
-                  style={[styles.segment, selected && styles.segmentSelected]}
+                  style={[
+                    styles.tile,
+                    selected && (isPlace ? styles.tileSelectedPlace : styles.tileSelectedTime),
+                  ]}
                 >
-                  <Icon name={opt.icon} size={18} color={selected ? colors.onAccent : colors.textSecondary} />
-                  <Text style={[styles.segmentText, selected && { color: colors.onAccent }]}>{opt.label}</Text>
+                  <Icon name={opt.icon} size={22} color={tint} />
+                  <Text style={[styles.tileText, selected && { color: tint, fontWeight: '700' }]}>{opt.label}</Text>
                 </Pressable>
               );
             })}
@@ -385,6 +420,7 @@ export default function NewAlarmScreen() {
                         key={p.id}
                         label={p.name}
                         icon="location-outline"
+                        tone="place"
                         selected={followUpPlaceId === p.id}
                         onPress={() => {
                           setFollowUpPlaceId(p.id);
@@ -398,12 +434,14 @@ export default function NewAlarmScreen() {
                       <View style={styles.wrap} accessibilityRole="radiogroup">
                         <Chip
                           label="När jag lämnar"
+                          tone="place"
                           icon="exit-outline"
                           selected={followUpType === 'EXIT_LOCATION'}
                           onPress={() => setFollowUpType('EXIT_LOCATION')}
                         />
                         <Chip
                           label="När jag kommer fram"
+                          tone="place"
                           icon="enter-outline"
                           selected={followUpType === 'ENTER_LOCATION'}
                           onPress={() => setFollowUpType('ENTER_LOCATION')}
@@ -450,6 +488,7 @@ export default function NewAlarmScreen() {
                       key={p.id}
                       label={p.name}
                       icon="location-outline"
+                      tone="place"
                       selected={savedPlaceId === p.id}
                       onPress={() => chooseSavedPlace(p.id)}
                     />
@@ -520,7 +559,19 @@ export default function NewAlarmScreen() {
       </ScrollView>
 
       <View style={[styles.footer, { paddingBottom: Math.max(insets.bottom, spacing.lg) }]}>
-        <Button title="Spara larm" icon="checkmark" loading={isSaving} onPress={handleSave} />
+        <Text style={styles.summary} accessibilityLiveRegion="polite">
+          {summaryParts.map((part, i) => (
+            <Text
+              key={i}
+              style={
+                part.tone === 'time' ? styles.summaryTime : part.tone === 'place' ? styles.summaryPlace : undefined
+              }
+            >
+              {part.text}
+            </Text>
+          ))}
+        </Text>
+        <Button title="Spara påminnelse" loading={isSaving} onPress={handleSave} />
       </View>
     </KeyboardAvoidingView>
   );
@@ -545,26 +596,32 @@ const useStyles = makeStyles(({ colors }) => ({
   checkRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, minHeight: MIN_TOUCH },
   checkText: { ...typography.body, color: colors.textPrimary, flex: 1 },
   iconButton: { minWidth: MIN_TOUCH, minHeight: MIN_TOUCH, alignItems: 'center', justifyContent: 'center' },
-  segmented: {
-    flexDirection: 'row',
-    backgroundColor: colors.surface,
-    borderRadius: radii.md,
+  bigInput: {
+    fontSize: 22,
+    lineHeight: 29,
+    fontWeight: '600',
+    color: colors.textPrimary,
+    paddingVertical: spacing.xs,
+    minHeight: 40,
+  },
+  tiles: { flexDirection: 'row', gap: spacing.sm },
+  tile: {
+    flex: 1,
+    minHeight: 76,
+    borderRadius: radii.lg,
     borderWidth: 1,
     borderColor: colors.border,
-    padding: 4,
-    gap: 4,
-  },
-  segment: {
-    flex: 1,
-    minHeight: MIN_TOUCH,
-    borderRadius: radii.sm,
+    backgroundColor: colors.surface,
     alignItems: 'center',
     justifyContent: 'center',
-    flexDirection: 'row',
     gap: 6,
   },
-  segmentSelected: { backgroundColor: colors.accent },
-  segmentText: { ...typography.footnote, fontWeight: '700', color: colors.textSecondary },
+  tileSelectedTime: { borderWidth: 2, borderColor: colors.accent, backgroundColor: colors.accentBg },
+  tileSelectedPlace: { borderWidth: 2, borderColor: colors.place, backgroundColor: colors.placeBg },
+  tileText: { ...typography.footnote, fontWeight: '600', color: colors.textSecondary },
+  summary: { ...typography.callout, fontWeight: '400', lineHeight: 21, color: colors.textSecondary },
+  summaryTime: { fontWeight: '600', color: colors.textPrimary },
+  summaryPlace: { fontWeight: '600', color: colors.placeText },
   previewBox: {
     alignItems: 'center',
     paddingVertical: spacing.lg,
@@ -577,6 +634,7 @@ const useStyles = makeStyles(({ colors }) => ({
   previewText: { ...typography.callout, color: colors.textSecondary },
   hint: { ...typography.footnote, color: colors.textMuted },
   footer: {
+    gap: spacing.md,
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.md,
     borderTopWidth: 1,

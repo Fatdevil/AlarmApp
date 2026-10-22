@@ -57,13 +57,21 @@ GitHub Actions kör båda kontrollstegen automatiskt på varje pull request och 
 
 Diagnostikvyn nås via Inställningar → tryck 7 gånger på versionsnumret (alltid synlig i dev-läge).
 
+## Utseende
+
+Tid är orange och plats är blå – i ikoner, klockslag, val och knappar, alltid tillsammans med en
+ikon (aldrig bara färg). Mörkt tema först, eftersom larm ofta används kväll och natt; ljust tema
+har samma färgroller. Färgerna finns i `src/theme/index.ts` och kontrasten (WCAG AA) testas i
+`__tests__/theme.test.ts`. Startsidan visar nästa påminnelse stort överst och övriga som kompakta
+rader; kort används bara för det som kräver handling (har ringt, förfrågningar).
+
 ## Inriktning
 
 Appen är en påminnelseapp med tid och plats – inte en ersättning för telefonens
 väckarklocka (den togs bort för att fokusera på det som skiljer appen från Klocka-appen).
 
 Agendan visar kommande påminnelser dag för dag, även långt fram i tiden. Sparade platser
-(Inställningar → Mina platser) kan väljas direkt i "Nytt larm"; larm på samma plats delar en zon.
+(Inställningar → Mina platser) kan väljas direkt i "Ny påminnelse"; larm på samma plats delar en zon.
 En tidspåminnelse kan följas upp vid en sparad plats ("Följ upp vid plats"): den ringer vid
 tiden och påminner sedan igen när du lämnar eller kommer till platsen. "Klar" stänger båda;
 snooza eller stäng av tidslarmet för att låta platsen fortsätta bevakas. Zonen registreras
@@ -103,13 +111,15 @@ Om modulen saknas eller behörighet nekas används `expo-notifications` automati
 - [ ] Platslarm "lämnar Jobbet" skapat hemma → larmar inte direkt; larmar först när du lämnar jobbet
 - [ ] Platslarm "kommer hem" skapat hemma → larmar inte direkt; larmar när du går och kommer tillbaka
 - [ ] Skapa/ta bort ett annat platslarm → befintliga platslarm larmar inte av omregistreringen
-- [ ] Agenda: tryck på en tom dag om en månad → "Nytt larm" med kl. 09:00 den dagen; påminnelsen syns under rätt dag
+- [ ] Agenda: tryck på en tom dag om en månad → "Ny påminnelse" med kl. 09:00 den dagen; påminnelsen syns under rätt dag
 - [ ] Agenda: tryck på en dag med prick → listan hoppar till dagen, även långt ner
-- [ ] Mina platser: spara Hemma och Jobbet; välj dem i "Nytt larm" utan att söka
+- [ ] Mina platser: spara Hemma och Jobbet; välj dem i "Ny påminnelse" utan att söka
 - [ ] Två larm på "Jobbet" → båda larmar när du lämnar jobbet
 - [ ] Flytta "Jobbet" med ett aktivt larm → larmet följer med och larmar inte direkt av omregistreringen
 - [ ] Ta bort en plats som används → larmet finns kvar och fungerar
 - [ ] Tid → plats: "Köp blommor" kl. 16 + "När jag lämnar Jobbet" → ringer 16:00; lämnar du jobbet efteråt kommer en påminnelse till
 - [ ] Tid → plats: lämna jobbet före 16:00 → ingen platspåminnelse då; tidslarmet ringer 16:00 som vanligt
 - [ ] Tid → plats: tryck "Klar" i tidslarmet → ingen platspåminnelse senare
+- [ ] Utseende: mörkt och ljust tema – startsidan visar "Nästa" överst; rader med checklista fälls ut vid tryck; svep fungerar
+- [ ] Utseende: VoiceOver/TalkBack – rader läses upp med tid, text och detaljer; åtgärderna Klar och Radera finns
 - [ ] Agenda: ett dagligt larm syns varje dag de närmaste två veckorna; platslarm under "Väntar på plats"
